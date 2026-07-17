@@ -1,5 +1,5 @@
 @echo off
-title NAPM Package Tool
+title GAIOP Package Tool
 
 :: Switch to project root (works no matter where you double-click from)
 cd /d "%~dp0.."
@@ -15,7 +15,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo ============================================
-echo   NAPM Upgrade Package Tool - Starting...
+echo   GAIOP Upgrade Package Tool - Starting...
 echo ============================================
 echo.
 echo   Local URL: http://localhost:18901

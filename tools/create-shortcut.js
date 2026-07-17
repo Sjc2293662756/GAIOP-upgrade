@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * 为 NAPM 打包工具创建桌面快捷方式（带自定义图标）。
+ * 为 GAIOP 打包工具创建桌面快捷方式（带自定义图标）。
  *
  * 用法:
  *   node tools/create-shortcut.js
  *
- * 输出: 桌面快捷方式 → "NAPM 打包工具.lnk"
+ * 输出: 桌面快捷方式 → "GAIOP 打包工具.lnk"
  *
  * 原理: 生成 VBScript 临时文件 (UTF-16LE) → cscript 执行 → 删除临时文件。
  *       避开 PowerShell 在 Git Bash 下的编码问题。
@@ -21,7 +21,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const batFile = path.join(projectRoot, 'tools', 'package-gui.bat');
 const iconFile = path.join(projectRoot, 'tools', 'package-gui.ico');
 const desktop = path.join(os.homedir(), 'Desktop');
-const shortcutPath = path.join(desktop, 'NAPM 打包工具.lnk');
+const shortcutPath = path.join(desktop, 'GAIOP 打包工具.lnk');
 
 console.log('项目根目录:', projectRoot);
 console.log('启动脚本:  ', batFile);
@@ -38,6 +38,16 @@ if (!fs.existsSync(iconFile)) {
   console.warn('   请先运行: node tools/make-icon.js');
 }
 
+// ── 清理旧快捷方式 ──────────────────────────────────────
+const oldShortcuts = ['NAPM 打包工具.lnk', 'NAPM Package Tool.lnk'];
+for (const old of oldShortcuts) {
+  const oldPath = path.join(desktop, old);
+  if (fs.existsSync(oldPath)) {
+    fs.unlinkSync(oldPath);
+    console.log('🗑️  已删除旧快捷方式:', old);
+  }
+}
+
 // ── 生成 VBScript ─────────────────────────────────────────
 // VBS 文件用 UTF-16LE 编码，完美支持中文路径
 const vbsLines = [
@@ -46,7 +56,7 @@ const vbsLines = [
   `lnk.TargetPath = "${batFile}"`,
   `lnk.WorkingDirectory = "${projectRoot}"`,
   'lnk.WindowStyle = 7',
-  'lnk.Description = "NAPM 升级包打包工具 — 可视化界面"',
+  'lnk.Description = "GAIOP 打包工具 — 可视化界面"',
   `lnk.IconLocation = "${iconFile}"`,
   'lnk.Save',
 ];

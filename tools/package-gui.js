@@ -1,24 +1,26 @@
 #!/usr/bin/env node
 /**
- * NAPM 升级包打包工具 — 可视化界面。
+ * GAIOP 升级包打包工具 — 可视化界面。
  *
- * 启动本地 Web 服务 → 浏览器打开表单 → 填参打包。
+ * 启动本地 Web 服务 → 浏览器打开表单 → 浏览目录 → 填参打包。
  *
  * 用法:
  *   node tools/package-gui.js
- *   NAPM_PACKAGE_GUI_PORT=18902 node tools/package-gui.js
+ *   GAIOP_PACKAGE_GUI_PORT=18902 node tools/package-gui.js
  *   node tools/package-gui.js --no-open
  */
 
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const { packageSkill, packageBundle, packageOpenClaw, packageFrontend } = require('./package');
 
 // ── 配置 ──────────────────────────────────────────────────
-const PORT = parseInt(process.env.NAPM_PACKAGE_GUI_PORT || '18901', 10);
+const PORT = parseInt(process.env.GAIOP_PACKAGE_GUI_PORT || '18901', 10);
 const AUTO_OPEN = !process.argv.includes('--no-open');
+const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // ── Express ───────────────────────────────────────────────
 const app = express();
@@ -29,6 +31,99 @@ app.use(express.json());
 /** 返回打包管理页面 */
 app.get('/', (_req, res) => {
   res.type('html').send(PAGE_HTML);
+});
+
+/** 浏览目录 —— 供前端目录选择器使用 */
+app.get('/api/browse', (req, res) => {
+  try {
+    let dirPath = req.query.path || '';
+
+    // 规范化路径
+    if (!dirPath) {
+      // 默认展示盘符列表（Windows）或根目录
+      if (process.platform === 'win32') {
+        return listDrives(res);
+      }
+      dirPath = '/';
+    }
+
+    dirPath = path.resolve(dirPath);
+
+    if (!fs.existsSync(dirPath)) {
+      return res.status(404).json({ ok: false, error: `目录不存在: ${dirPath}` });
+    }
+
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ ok: false, error: '路径不是目录' });
+    }
+
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    const dirs = [];
+    const files = [];
+
+    for (const entry of entries) {
+      // 跳过隐藏文件/目录
+      if (entry.name.startsWith('.') || entry.name.startsWith('$')) continue;
+      if (entry.name === 'node_modules') continue;
+
+      try {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory() || entry.isSymbolicLink()) {
+          dirs.push({
+            name: entry.name,
+            path: fullPath,
+          });
+        } else {
+          files.push({
+            name: entry.name,
+            path: fullPath,
+            size: fs.statSync(fullPath).size,
+          });
+        }
+      } catch {
+        // 跳过无权限的条目
+      }
+    }
+
+    // 排序：目录在前，字母序
+    dirs.sort((a, b) => a.name.localeCompare(b.name));
+    files.sort((a, b) => a.name.localeCompare(b.name));
+
+    const parent = path.dirname(dirPath);
+
+    res.json({
+      ok: true,
+      path: dirPath,
+      parent: parent !== dirPath ? parent : null,
+      dirs,
+      files,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/** 列出 Windows 盘符 */
+function listDrives(res) {
+  const drives = [];
+  for (let c = 'A'.charCodeAt(0); c <= 'Z'.charCodeAt(0); c++) {
+    const letter = String.fromCharCode(c);
+    const root = `${letter}:/`;
+    try {
+      if (fs.existsSync(root)) {
+        drives.push(root);
+      }
+    } catch {
+      // skip
+    }
+  }
+  res.json({ ok: true, path: '', parent: null, dirs: drives.map(d => ({ name: d, path: d })), files: [] });
+}
+
+/** 获取盘符列表（初始调用） */
+app.get('/api/drives', (_req, res) => {
+  listDrives(res);
 });
 
 /** 执行打包 */
@@ -46,14 +141,13 @@ app.post('/api/package', (req, res) => {
     return res.status(400).json({ ok: false, error: '源目录不能为空' });
   }
 
-  // 临时设置加密密钥（仅在本次请求中生效）
+  // 临时设置加密密钥
   if (encryptionKey) {
     process.env.NAPM_PACKAGE_ENCRYPTION_KEY = encryptionKey;
   } else {
     delete process.env.NAPM_PACKAGE_ENCRYPTION_KEY;
   }
 
-  // 输出目录
   const outDir = outputDir || './out';
 
   try {
@@ -91,22 +185,40 @@ app.post('/api/package', (req, res) => {
   }
 });
 
+// ── 辅助：打开浏览器 ────────────────────────────────────
+function openBrowser(url) {
+  const { exec } = require('child_process');
+  const cmd = process.platform === 'win32'
+    ? `start "" "${url}"`
+    : process.platform === 'darwin'
+      ? `open "${url}"`
+      : `xdg-open "${url}"`;
+  exec(cmd, () => {});
+}
+
 // ── 启动 ──────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
-  console.log(`\n🧰 NAPM 升级包打包工具\n`);
+  console.log(`\n🧰 GAIOP 升级包打包工具\n`);
   console.log(`   本地访问: ${url}`);
   console.log(`   按 Ctrl+C 停止\n`);
 
   if (AUTO_OPEN) {
-    // 尝试用系统默认浏览器打开
-    const { exec } = require('child_process');
-    const cmd = process.platform === 'win32'
-      ? `start "" "${url}"`
-      : process.platform === 'darwin'
-        ? `open "${url}"`
-        : `xdg-open "${url}"`;
-    exec(cmd, () => {});
+    openBrowser(url);
+  }
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    const url = `http://localhost:${PORT}`;
+    console.log(`\n🧰 GAIOP 打包工具 — 已在运行\n`);
+    console.log(`   端口 ${PORT} 已被占用 → 直接打开浏览器\n`);
+    if (AUTO_OPEN) {
+      openBrowser(url);
+    }
+    process.exit(0);
+  } else {
+    throw err;
   }
 });
 
@@ -119,7 +231,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NAPM 升级包打包工具</title>
+<title>GAIOP 打包工具</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -131,7 +243,7 @@ const PAGE_HTML = `<!DOCTYPE html>
     justify-content: center;
     padding: 40px 16px;
   }
-  .container { max-width: 640px; width: 100%; }
+  .container { max-width: 660px; width: 100%; }
 
   /* ── 头部 ── */
   .header {
@@ -179,7 +291,19 @@ const PAGE_HTML = `<!DOCTYPE html>
   /* ── 表单 ── */
   .form-group { margin-bottom: 16px; }
   .form-group label { display: block; font-size: 13px; font-weight: 600; color: #333; margin-bottom: 5px; }
-  .form-group input {
+  .input-row { display: flex; gap: 8px; }
+  .input-row input {
+    flex: 1; padding: 10px 12px; border: 1.5px solid #d0d0d0; border-radius: 8px;
+    font-size: 14px; transition: border-color 0.2s; outline: none; font-family: monospace;
+  }
+  .input-row input:focus { border-color: #0f3460; box-shadow: 0 0 0 3px rgba(15,52,96,0.08); }
+  .btn-browse {
+    padding: 10px 14px; border: 1.5px solid #0f3460; border-radius: 8px;
+    background: #fff; color: #0f3460; font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap; transition: all 0.15s;
+  }
+  .btn-browse:hover { background: #0f3460; color: #fff; }
+  .form-group input:not(.input-row input) {
     width: 100%; padding: 10px 12px; border: 1.5px solid #d0d0d0; border-radius: 8px;
     font-size: 14px; transition: border-color 0.2s; outline: none;
   }
@@ -216,6 +340,83 @@ const PAGE_HTML = `<!DOCTYPE html>
   .result-info dt { color: #666; font-weight: 500; }
   .result-info dd { font-family: monospace; font-size: 13px; word-break: break-all; }
 
+  /* ── 目录选择器弹窗 ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    z-index: 1000; justify-content: center; align-items: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: #fff; border-radius: 14px; width: 90%; max-width: 600px;
+    max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,0.2);
+  }
+  .modal-header {
+    padding: 16px 20px; border-bottom: 1px solid #eee;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-header h3 { font-size: 16px; color: #16213e; }
+  .modal-close {
+    width: 32px; height: 32px; border: none; background: #f0f0f0; border-radius: 8px;
+    font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .modal-close:hover { background: #e0e0e0; }
+
+  /* 跳转栏 */
+  .modal-jump {
+    padding: 10px 20px; display: flex; gap: 8px; border-bottom: 1px solid #f0f0f0;
+  }
+  .modal-jump input {
+    flex: 1; padding: 8px 10px; border: 1.5px solid #d0d0d0; border-radius: 6px;
+    font-size: 13px; font-family: monospace; outline: none;
+  }
+  .modal-jump input:focus { border-color: #0f3460; }
+  .modal-jump button {
+    padding: 8px 14px; border: none; background: #0f3460; color: #fff;
+    border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .modal-jump button:hover { background: #16213e; }
+
+  /* 面包屑 */
+  .breadcrumb {
+    padding: 8px 20px; background: #f8f9fa; border-bottom: 1px solid #eee;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 13px;
+    min-height: 36px; overflow-x: auto;
+  }
+  .breadcrumb span { color: #999; }
+  .breadcrumb a { color: #0f3460; text-decoration: none; cursor: pointer; white-space: nowrap; }
+  .breadcrumb a:hover { text-decoration: underline; }
+
+  /* 目录列表 */
+  .dir-list {
+    flex: 1; overflow-y: auto; padding: 8px 0; min-height: 200px; max-height: 350px;
+  }
+  .dir-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 20px;
+    cursor: pointer; transition: background 0.1s; border: none; width: 100%;
+    background: none; font-size: 14px; text-align: left;
+  }
+  .dir-item:hover { background: #f0f4ff; }
+  .dir-item.selected { background: #e8f0ff; }
+  .dir-item .folder-icon { font-size: 18px; flex-shrink: 0; }
+  .dir-item .item-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dir-item.up-level { color: #666; font-weight: 500; }
+  .dir-empty { padding: 40px 20px; text-align: center; color: #999; font-size: 14px; }
+
+  /* 底部 */
+  .modal-footer {
+    padding: 14px 20px; border-top: 1px solid #eee;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-footer .current-path {
+    font-size: 12px; color: #999; font-family: monospace;
+    max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .modal-footer button {
+    padding: 10px 24px; border: none; background: #0f3460; color: #fff;
+    border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .modal-footer button:hover { background: #16213e; }
+
   /* ── 响应式 ── */
   @media (max-width: 520px) {
     .type-selector { grid-template-columns: repeat(2, 1fr); }
@@ -227,7 +428,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 <div class="container">
 
   <div class="header">
-    <h1>🧰 NAPM 升级包打包工具</h1>
+    <h1>🧰 GAIOP 打包工具</h1>
     <p>
       <span class="badge badge-sign">RSA-SHA256 签名</span>
       &nbsp;
@@ -269,21 +470,23 @@ const PAGE_HTML = `<!DOCTYPE html>
         <input type="text" id="fComponent" placeholder="如: napm-diag">
         <div class="form-hint">Skill 的目录名，必须与服务器上注册的名称一致</div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="fVersion">版本号</label>
-          <input type="text" id="fVersion" placeholder="如: 2.1.0（SemVer 格式）">
-        </div>
+      <div class="form-group">
+        <label for="fVersion">版本号</label>
+        <input type="text" id="fVersion" placeholder="如: 2.1.0（SemVer 格式）">
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="fSourceDir">源目录</label>
+      <div class="form-group">
+        <label for="fSourceDir">源目录</label>
+        <div class="input-row">
           <input type="text" id="fSourceDir" placeholder="如: ./skills/napm-diag">
-          <div class="form-hint">Skill 代码所在目录（包含 SKILL.md）</div>
+          <button class="btn-browse" onclick="openBrowser('fSourceDir')">📁 浏览</button>
         </div>
-        <div class="form-group">
-          <label for="fOutputDir">输出目录</label>
+        <div class="form-hint">Skill 代码所在目录（包含 SKILL.md）</div>
+      </div>
+      <div class="form-group">
+        <label for="fOutputDir">输出目录</label>
+        <div class="input-row">
           <input type="text" id="fOutputDir" placeholder="默认: ./out">
+          <button class="btn-browse" onclick="openBrowser('fOutputDir')">📁 浏览</button>
         </div>
       </div>
     </div>
@@ -294,15 +497,19 @@ const PAGE_HTML = `<!DOCTYPE html>
         <label for="fBundleVersion">版本号</label>
         <input type="text" id="fBundleVersion" placeholder="如: 3.0.0（SemVer 格式）">
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="fBundleSourceDir">Skills 根目录</label>
+      <div class="form-group">
+        <label for="fBundleSourceDir">Skills 根目录</label>
+        <div class="input-row">
           <input type="text" id="fBundleSourceDir" placeholder="如: ./skills（包含多个 Skill 子目录）">
-          <div class="form-hint">目录下每个子目录视为一个 Skill</div>
+          <button class="btn-browse" onclick="openBrowser('fBundleSourceDir')">📁 浏览</button>
         </div>
-        <div class="form-group">
-          <label for="fBundleOutputDir">输出目录</label>
+        <div class="form-hint">目录下每个子目录视为一个 Skill</div>
+      </div>
+      <div class="form-group">
+        <label for="fBundleOutputDir">输出目录</label>
+        <div class="input-row">
           <input type="text" id="fBundleOutputDir" placeholder="默认: ./out">
+          <button class="btn-browse" onclick="openBrowser('fBundleOutputDir')">📁 浏览</button>
         </div>
       </div>
     </div>
@@ -313,14 +520,18 @@ const PAGE_HTML = `<!DOCTYPE html>
         <label for="fOpenClawVersion">版本号</label>
         <input type="text" id="fOpenClawVersion" placeholder="如: 2026.6.0">
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="fOpenClawSourceDir">源目录</label>
+      <div class="form-group">
+        <label for="fOpenClawSourceDir">源目录</label>
+        <div class="input-row">
           <input type="text" id="fOpenClawSourceDir" placeholder="如: ./openclaw-dist">
+          <button class="btn-browse" onclick="openBrowser('fOpenClawSourceDir')">📁 浏览</button>
         </div>
-        <div class="form-group">
-          <label for="fOpenClawOutputDir">输出目录</label>
+      </div>
+      <div class="form-group">
+        <label for="fOpenClawOutputDir">输出目录</label>
+        <div class="input-row">
           <input type="text" id="fOpenClawOutputDir" placeholder="默认: ./out">
+          <button class="btn-browse" onclick="openBrowser('fOpenClawOutputDir')">📁 浏览</button>
         </div>
       </div>
     </div>
@@ -331,15 +542,19 @@ const PAGE_HTML = `<!DOCTYPE html>
         <label for="fFrontendVersion">版本号</label>
         <input type="text" id="fFrontendVersion" placeholder="如: 2.2.0（SemVer 格式）">
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="fFrontendSourceDir">dist 目录</label>
+      <div class="form-group">
+        <label for="fFrontendSourceDir">dist 目录</label>
+        <div class="input-row">
           <input type="text" id="fFrontendSourceDir" placeholder="如: ./dist（Vite 构建产物）">
-          <div class="form-hint">Vite/Webpack build 输出的 dist/ 目录</div>
+          <button class="btn-browse" onclick="openBrowser('fFrontendSourceDir')">📁 浏览</button>
         </div>
-        <div class="form-group">
-          <label for="fFrontendOutputDir">输出目录</label>
+        <div class="form-hint">Vite/Webpack build 输出的 dist/ 目录</div>
+      </div>
+      <div class="form-group">
+        <label for="fFrontendOutputDir">输出目录</label>
+        <div class="input-row">
           <input type="text" id="fFrontendOutputDir" placeholder="默认: ./out">
+          <button class="btn-browse" onclick="openBrowser('fFrontendOutputDir')">📁 浏览</button>
         </div>
       </div>
     </div>
@@ -375,8 +590,188 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 </div>
 
+<!-- ── 目录选择器弹窗 ── -->
+<div class="modal-overlay" id="browserModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>📁 选择目录</h3>
+      <button class="modal-close" onclick="closeBrowser()">&times;</button>
+    </div>
+    <div class="modal-jump">
+      <input type="text" id="browserJumpInput" placeholder="输入路径后回车跳转...">
+      <button onclick="jumpToPath()">跳转</button>
+    </div>
+    <div class="breadcrumb" id="browserBreadcrumb"></div>
+    <div class="dir-list" id="browserList"></div>
+    <div class="modal-footer">
+      <span class="current-path" id="browserCurrentPath"></span>
+      <button onclick="selectCurrentDir()">✅ 选择此目录</button>
+    </div>
+  </div>
+</div>
+
 <script>
-// ── 类型切换 ───────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// 目录选择器
+// ════════════════════════════════════════════════════════════
+let browserTargetInput = null;   // 当前正在为哪个 input 选择目录
+let browserCurrentPath = '';     // 当前浏览的路径
+let browserSelectedDir = '';     // 当前选中的子目录（高亮）
+
+async function openBrowser(inputId) {
+  browserTargetInput = inputId;
+  document.getElementById('browserModal').classList.add('active');
+
+  // 从 input 当前值作为起始路径
+  const currentVal = document.getElementById(inputId).value.trim();
+  if (currentVal) {
+    await navigateTo(currentVal);
+  } else {
+    await navigateTo('');
+  }
+}
+
+function closeBrowser() {
+  document.getElementById('browserModal').classList.remove('active');
+  browserTargetInput = null;
+}
+
+// 点击遮罩关闭
+document.getElementById('browserModal').addEventListener('click', function(e) {
+  if (e.target === this) closeBrowser();
+});
+
+async function navigateTo(dirPath) {
+  try {
+    const resp = await fetch('/api/browse?path=' + encodeURIComponent(dirPath));
+    const data = await resp.json();
+
+    if (!data.ok) {
+      alert('无法访问目录: ' + (data.error || '未知错误'));
+      return;
+    }
+
+    browserCurrentPath = data.path;
+    browserSelectedDir = '';
+
+    // 更新当前路径显示
+    document.getElementById('browserCurrentPath').textContent = data.path || '选择盘符';
+
+    // 渲染面包屑
+    renderBreadcrumb(data.path);
+
+    // 渲染目录列表
+    renderDirList(data);
+
+    // 更新跳转输入框
+    document.getElementById('browserJumpInput').value = data.path || '';
+
+  } catch (err) {
+    alert('请求失败: ' + err.message);
+  }
+}
+
+function renderBreadcrumb(dirPath) {
+  const bc = document.getElementById('browserBreadcrumb');
+  if (!dirPath) {
+    bc.innerHTML = '<span>计算机</span>';
+    return;
+  }
+
+  // 拆分路径为层级
+  let parts;
+  if (dirPath.includes(':/')) {
+    // Windows: G:/a/b/c
+    parts = dirPath.replace(/\\\\/g, '/').split('/').filter(Boolean);
+  } else {
+    // Unix: /a/b/c
+    parts = dirPath.split('/').filter(Boolean);
+    if (dirPath.startsWith('/')) parts.unshift('/');
+  }
+
+  let html = '';
+  let accumulated = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) html += '<span> / </span>';
+    if (parts[i] === '/') {
+      accumulated = '/';
+      html += '<a onclick="navigateTo(\\'/\\')">/</a>';
+    } else {
+      if (accumulated && !accumulated.endsWith('/')) {
+        accumulated += '/';
+      }
+      accumulated += parts[i];
+      const label = parts[i];
+      html += '<a onclick="navigateTo(\\'' + escapePath(accumulated) + '\\')">' + escapeHtml(label) + '</a>';
+    }
+  }
+
+  bc.innerHTML = html;
+}
+
+function renderDirList(data) {
+  const list = document.getElementById('browserList');
+
+  // ".." 返回上级
+  let html = '';
+  if (data.parent !== null && data.parent !== data.path) {
+    html += '<button class="dir-item up-level" onclick="navigateTo(\\'' + escapePath(data.parent) + '\\')">';
+    html += '<span class="folder-icon">📂</span>';
+    html += '<span class="item-name">.. (上级目录)</span>';
+    html += '</button>';
+  }
+
+  if (data.dirs.length === 0 && (data.parent === null || data.parent === data.path)) {
+    html += '<div class="dir-empty">此目录下没有子目录</div>';
+  }
+
+  for (const d of data.dirs) {
+    html += '<button class="dir-item" ondblclick="navigateTo(\\'' + escapePath(d.path) + '\\')" onclick="selectSubDir(\\'' + escapePath(d.path) + '\\', this)">';
+    html += '<span class="folder-icon">📁</span>';
+    html += '<span class="item-name">' + escapeHtml(d.name) + '</span>';
+    html += '</button>';
+  }
+
+  list.innerHTML = html;
+}
+
+function selectSubDir(dirPath, el) {
+  // 单选高亮
+  document.querySelectorAll('.dir-item.selected').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  browserSelectedDir = dirPath;
+  document.getElementById('browserCurrentPath').textContent = dirPath;
+  document.getElementById('browserJumpInput').value = dirPath;
+}
+
+function selectCurrentDir() {
+  if (!browserTargetInput) return;
+  const pathToUse = browserSelectedDir || browserCurrentPath;
+  if (pathToUse) {
+    document.getElementById(browserTargetInput).value = pathToUse;
+  }
+  closeBrowser();
+}
+
+function jumpToPath() {
+  const p = document.getElementById('browserJumpInput').value.trim();
+  if (p) navigateTo(p);
+}
+
+// 回车跳转
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('browserJumpInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') jumpToPath();
+  });
+});
+
+function escapePath(p) {
+  return String(p).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'");
+}
+
+// ════════════════════════════════════════════════════════════
+// 类型切换
+// ════════════════════════════════════════════════════════════
 function switchType() {
   const type = getType();
   document.getElementById('skillFields').style.display    = type === 'skill'    ? '' : 'none';
@@ -395,7 +790,9 @@ function getType() {
   return document.querySelector('input[name="pkgType"]:checked').value;
 }
 
-// ── 打包 ───────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// 打包
+// ════════════════════════════════════════════════════════════
 async function doBuild() {
   const type = getType();
   const btn = document.getElementById('buildBtn');
@@ -406,7 +803,6 @@ async function doBuild() {
   btn.textContent = '⏳ 打包中...';
   resultArea.style.display = 'none';
 
-  // 收集参数
   const body = { type };
 
   if (type === 'skill') {
@@ -428,7 +824,6 @@ async function doBuild() {
     body.outputDir = document.getElementById('fFrontendOutputDir').value.trim();
   }
 
-  // 加密密钥
   if (document.getElementById('fEncrypt').checked) {
     body.encryptionKey = document.getElementById('fEncryptKey').value.trim();
   }
@@ -472,7 +867,7 @@ async function doBuild() {
       <div class="result result-error">
         <div class="result-title">❌ 请求失败</div>
         <p>无法连接到打包服务: \${escapeHtml(err.message)}</p>
-        <p style="margin-top:6px;font-size:12px;color:#999;">请确认服务已启动: node tools/package-gui.js</p>
+        <p style="margin-top:6px;font-size:12px;color:#999;">请确认服务已启动</p>
       </div>
     \`;
   } finally {
