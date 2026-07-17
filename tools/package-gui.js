@@ -287,6 +287,10 @@ const PAGE_HTML = `<!DOCTYPE html>
     border-color: #0f3460; background: #f0f4ff; color: #0f3460; font-weight: 600;
   }
   .type-option label:hover { border-color: #0f3460; }
+  .type-desc {
+    font-size: 11px; font-weight: 400; color: #999; margin-top: -2px;
+  }
+  .type-option input:checked + label .type-desc { color: #0f3460; }
 
   /* ── 表单 ── */
   .form-group { margin-bottom: 16px; }
@@ -442,19 +446,19 @@ const PAGE_HTML = `<!DOCTYPE html>
     <div class="type-selector">
       <div class="type-option">
         <input type="radio" name="pkgType" value="skill" id="tSkill" checked onchange="switchType()">
-        <label for="tSkill"><span class="icon">📦</span> Skill</label>
+        <label for="tSkill"><span class="icon">📦</span> Skill<span class="type-desc">单个技能插件</span></label>
       </div>
       <div class="type-option">
         <input type="radio" name="pkgType" value="bundle" id="tBundle" onchange="switchType()">
-        <label for="tBundle"><span class="icon">📚</span> Bundle</label>
+        <label for="tBundle"><span class="icon">📚</span> Bundle<span class="type-desc">批量技能合集</span></label>
       </div>
       <div class="type-option">
         <input type="radio" name="pkgType" value="openclaw" id="tOpenClaw" onchange="switchType()">
-        <label for="tOpenClaw"><span class="icon">⚙️</span> OpenClaw</label>
+        <label for="tOpenClaw"><span class="icon">⚙️</span> OpenClaw<span class="type-desc">CLI / AI 运行时</span></label>
       </div>
       <div class="type-option">
         <input type="radio" name="pkgType" value="frontend" id="tFrontend" onchange="switchType()">
-        <label for="tFrontend"><span class="icon">🌐</span> Frontend</label>
+        <label for="tFrontend"><span class="icon">🌐</span> Frontend<span class="type-desc">Web 管理后台</span></label>
       </div>
     </div>
   </div>
@@ -465,6 +469,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
     <!-- Skill 字段 -->
     <div id="skillFields">
+      <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">📦 <b>Skill 包</b> — 打包<b>单个技能插件</b>目录。适用于更新某个 Skill（如 napm-diag），替换后 touch SKILL.md 热加载生效。</p>
       <div class="form-group">
         <label for="fComponent">组件名</label>
         <input type="text" id="fComponent" placeholder="如: napm-diag">
@@ -493,6 +498,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
     <!-- Bundle 字段 -->
     <div id="bundleFields">
+      <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">📚 <b>Bundle 包</b> — 打包<b>整个 skills/ 目录下所有 Skill</b>。适用于批量升级，合并替换 + 自动注册新 Skill。</p>
       <div class="form-group">
         <label for="fBundleVersion">版本号</label>
         <input type="text" id="fBundleVersion" placeholder="如: 3.0.0（SemVer 格式）">
@@ -516,6 +522,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
     <!-- OpenClaw 字段 -->
     <div id="openclawFields">
+      <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">⚙️ <b>OpenClaw 包</b> — 打包 <b>OpenClaw CLI / AI 运行时</b>。升级时自动进入维护模式 → systemctl restart → 健康轮询（60s）。</p>
       <div class="form-group">
         <label for="fOpenClawVersion">版本号</label>
         <input type="text" id="fOpenClawVersion" placeholder="如: 2026.6.0">
@@ -538,6 +545,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
     <!-- Frontend 字段 -->
     <div id="frontendFields">
+      <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">🌐 <b>Frontend 包</b> — 打包 <b>Web 管理后台前端</b>（Vite/Webpack 构建产物 dist/）。静态文件原子替换 + HTTP 冒烟测试。</p>
       <div class="form-group">
         <label for="fFrontendVersion">版本号</label>
         <input type="text" id="fFrontendVersion" placeholder="如: 2.2.0（SemVer 格式）">
@@ -681,8 +689,8 @@ function renderBreadcrumb(dirPath) {
   // 拆分路径为层级
   let parts;
   if (dirPath.includes(':/')) {
-    // Windows: G:/a/b/c
-    parts = dirPath.replace(/\\\\/g, '/').split('/').filter(Boolean);
+    // Windows: G:/a/b/c — normalize backslashes
+    parts = dirPath.replace(/\\/g, '/').split('/').filter(Boolean);
   } else {
     // Unix: /a/b/c
     parts = dirPath.split('/').filter(Boolean);
@@ -695,14 +703,13 @@ function renderBreadcrumb(dirPath) {
     if (i > 0) html += '<span> / </span>';
     if (parts[i] === '/') {
       accumulated = '/';
-      html += '<a onclick="navigateTo(\\'/\\')">/</a>';
+      html += '<a href="#" data-nav="' + escAttr('/') + '">/</a>';
     } else {
       if (accumulated && !accumulated.endsWith('/')) {
         accumulated += '/';
       }
       accumulated += parts[i];
-      const label = parts[i];
-      html += '<a onclick="navigateTo(\\'' + escapePath(accumulated) + '\\')">' + escapeHtml(label) + '</a>';
+      html += '<a href="#" data-nav="' + escAttr(accumulated) + '">' + escapeHtml(parts[i]) + '</a>';
     }
   }
 
@@ -712,10 +719,10 @@ function renderBreadcrumb(dirPath) {
 function renderDirList(data) {
   const list = document.getElementById('browserList');
 
-  // ".." 返回上级
   let html = '';
+  // ".." 返回上级
   if (data.parent !== null && data.parent !== data.path) {
-    html += '<button class="dir-item up-level" onclick="navigateTo(\\'' + escapePath(data.parent) + '\\')">';
+    html += '<button class="dir-item up-level" data-nav="' + escAttr(data.parent) + '">';
     html += '<span class="folder-icon">📂</span>';
     html += '<span class="item-name">.. (上级目录)</span>';
     html += '</button>';
@@ -726,7 +733,7 @@ function renderDirList(data) {
   }
 
   for (const d of data.dirs) {
-    html += '<button class="dir-item" ondblclick="navigateTo(\\'' + escapePath(d.path) + '\\')" onclick="selectSubDir(\\'' + escapePath(d.path) + '\\', this)">';
+    html += '<button class="dir-item" data-nav="' + escAttr(d.path) + '">';
     html += '<span class="folder-icon">📁</span>';
     html += '<span class="item-name">' + escapeHtml(d.name) + '</span>';
     html += '</button>';
@@ -735,14 +742,40 @@ function renderDirList(data) {
   list.innerHTML = html;
 }
 
-function selectSubDir(dirPath, el) {
-  // 单选高亮
-  document.querySelectorAll('.dir-item.selected').forEach(e => e.classList.remove('selected'));
-  el.classList.add('selected');
+// 事件委托：目录列表点击（单击选中，双击进入）
+let dirListClickTimer = null;
+document.getElementById('browserList').addEventListener('click', function(e) {
+  const btn = e.target.closest('.dir-item');
+  if (!btn) return;
+
+  const dirPath = btn.getAttribute('data-nav');
+  if (!dirPath) return;
+
+  // 高亮选中
+  document.querySelectorAll('.dir-item.selected').forEach(el => el.classList.remove('selected'));
+  btn.classList.add('selected');
   browserSelectedDir = dirPath;
   document.getElementById('browserCurrentPath').textContent = dirPath;
   document.getElementById('browserJumpInput').value = dirPath;
-}
+
+  // 双击检测 → 进入目录
+  if (dirListClickTimer) {
+    clearTimeout(dirListClickTimer);
+    dirListClickTimer = null;
+    navigateTo(dirPath);
+  } else {
+    dirListClickTimer = setTimeout(function() { dirListClickTimer = null; }, 300);
+  }
+});
+
+// 事件委托：面包屑点击
+document.getElementById('browserBreadcrumb').addEventListener('click', function(e) {
+  e.preventDefault();
+  const a = e.target.closest('a');
+  if (!a) return;
+  const dirPath = a.getAttribute('data-nav');
+  if (dirPath) navigateTo(dirPath);
+});
 
 function selectCurrentDir() {
   if (!browserTargetInput) return;
@@ -765,8 +798,8 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 });
 
-function escapePath(p) {
-  return String(p).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'");
+function escAttr(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // ════════════════════════════════════════════════════════════
