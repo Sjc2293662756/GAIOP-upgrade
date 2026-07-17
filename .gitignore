@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Database (local)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Private keys & secrets
+config/private.pem
+config/*.key
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Build output
+dist/
