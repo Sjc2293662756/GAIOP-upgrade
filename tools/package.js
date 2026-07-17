@@ -17,11 +17,23 @@ const path = require('path');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 
-// ── 参数解析 ──────────────────────────────────────────────
-const [,, type, arg1, arg2, arg3, arg4] = process.argv;
+// ── 私钥加载 ──────────────────────────────────────────────
+const PRIVATE_KEY_PATH = path.join(__dirname, '..', 'config', 'private.pem');
+function loadPrivateKey() {
+  if (!fs.existsSync(PRIVATE_KEY_PATH)) {
+    throw new Error(`私钥文件不存在: ${PRIVATE_KEY_PATH}`);
+  }
+  return fs.readFileSync(PRIVATE_KEY_PATH, 'utf8');
+}
 
-if (!type || type === '--help' || type === '-h') {
-  console.log(`
+// ════════════════════════════════════════════════════════════
+// CLI 入口（仅在直接运行时执行）
+// ════════════════════════════════════════════════════════════
+if (require.main === module) {
+  const [,, type, arg1, arg2, arg3, arg4] = process.argv;
+
+  if (!type || type === '--help' || type === '-h') {
+    console.log(`
 NAPM 升级包打包工具
 
 用法:
@@ -34,58 +46,55 @@ NAPM 升级包打包工具
   node tools/package.js skill napm-diag 2.1.0 ./skills/napm-diag ./out
   node tools/package.js bundle 3.0.0 ./skills ./out
 `);
-  process.exit(0);
-}
+    process.exit(0);
+  }
 
-// ── 私钥加载 ──────────────────────────────────────────────
-const PRIVATE_KEY_PATH = path.join(__dirname, '..', 'config', 'private.pem');
-if (!fs.existsSync(PRIVATE_KEY_PATH)) {
-  console.error(`错误: 私钥文件不存在: ${PRIVATE_KEY_PATH}`);
-  process.exit(1);
-}
-const privateKey = fs.readFileSync(PRIVATE_KEY_PATH, 'utf8');
+  let result;
+  switch (type) {
+    case 'skill': {
+      const [component, version, sourceDir, outputDir = './out'] = [arg1, arg2, arg3, arg4];
+      if (!component || !version || !sourceDir) {
+        console.error('用法: node tools/package.js skill <component-name> <version> <source-dir> [output-dir]');
+        process.exit(1);
+      }
+      result = packageSkill(component, version, sourceDir, outputDir);
+      break;
+    }
+    case 'bundle': {
+      const [version, skillsDir, outputDir = './out'] = [arg1, arg2, arg3];
+      if (!version || !skillsDir) {
+        console.error('用法: node tools/package.js bundle <version> <skills-dir> [output-dir]');
+        process.exit(1);
+      }
+      result = packageBundle(version, skillsDir, outputDir);
+      break;
+    }
+    case 'openclaw': {
+      const [version, sourceDir, outputDir = './out'] = [arg1, arg2, arg3];
+      if (!version || !sourceDir) {
+        console.error('用法: node tools/package.js openclaw <version> <source-dir> [output-dir]');
+        process.exit(1);
+      }
+      result = packageOpenClaw(version, sourceDir, outputDir);
+      break;
+    }
+    case 'frontend': {
+      const [version, distDir, outputDir = './out'] = [arg1, arg2, arg3];
+      if (!version || !distDir) {
+        console.error('用法: node tools/package.js frontend <version> <dist-dir> [output-dir]');
+        process.exit(1);
+      }
+      result = packageFrontend(version, distDir, outputDir);
+      break;
+    }
+    default:
+      console.error(`未知包类型: ${type}。有效值: skill, bundle, openclaw, frontend`);
+      process.exit(1);
+  }
 
-// ── 按类型分发 ────────────────────────────────────────────
-switch (type) {
-  case 'skill': {
-    const [component, version, sourceDir, outputDir = './out'] = [arg1, arg2, arg3, arg4];
-    if (!component || !version || !sourceDir) {
-      console.error('用法: node tools/package.js skill <component-name> <version> <source-dir> [output-dir]');
-      process.exit(1);
-    }
-    packageSkill(component, version, sourceDir, outputDir);
-    break;
-  }
-  case 'bundle': {
-    const [version, skillsDir, outputDir = './out'] = [arg1, arg2, arg3];
-    if (!version || !skillsDir) {
-      console.error('用法: node tools/package.js bundle <version> <skills-dir> [output-dir]');
-      process.exit(1);
-    }
-    packageBundle(version, skillsDir, outputDir);
-    break;
-  }
-  case 'openclaw': {
-    const [version, sourceDir, outputDir = './out'] = [arg1, arg2, arg3];
-    if (!version || !sourceDir) {
-      console.error('用法: node tools/package.js openclaw <version> <source-dir> [output-dir]');
-      process.exit(1);
-    }
-    packageOpenClaw(version, sourceDir, outputDir);
-    break;
-  }
-  case 'frontend': {
-    const [version, distDir, outputDir = './out'] = [arg1, arg2, arg3];
-    if (!version || !distDir) {
-      console.error('用法: node tools/package.js frontend <version> <dist-dir> [output-dir]');
-      process.exit(1);
-    }
-    packageFrontend(version, distDir, outputDir);
-    break;
-  }
-  default:
-    console.error(`未知包类型: ${type}。有效值: skill, bundle, openclaw, frontend`);
-    process.exit(1);
+  console.log(`✅ 已生成: ${result.outputPath}`);
+  console.log(`   类型: ${result.type} | 版本: ${result.version}`);
+  console.log(`   文件: ${result.fileCount} 个 | 签名: RSA-SHA256${result.encrypted ? ' | 加密: AES-256-GCM' : ' | 未加密'}`);
 }
 
 // ── 打包逻辑 ──────────────────────────────────────────────
@@ -105,7 +114,7 @@ function packageSkill(component, version, sourceDir, outputDir) {
 
   const files = {};
   collectFiles(sourceDir, `skills/${component}`, files);
-  buildAndSign(manifest, files, outputDir, `${component}-${version}.zip`);
+  return buildAndSign(manifest, files, outputDir, `${component}-${version}.zip`);
 }
 
 function packageBundle(version, skillsDir, outputDir) {
@@ -123,7 +132,7 @@ function packageBundle(version, skillsDir, outputDir) {
 
   const files = {};
   collectFiles(skillsDir, 'skills', files);
-  buildAndSign(manifest, files, outputDir, `napm-skills-${version}.zip`);
+  return buildAndSign(manifest, files, outputDir, `napm-skills-${version}.zip`);
 }
 
 function packageOpenClaw(version, sourceDir, outputDir) {
@@ -141,7 +150,7 @@ function packageOpenClaw(version, sourceDir, outputDir) {
 
   const files = {};
   collectFiles(sourceDir, '', files);
-  buildAndSign(manifest, files, outputDir, `openclaw-${version}.zip`);
+  return buildAndSign(manifest, files, outputDir, `openclaw-${version}.zip`);
 }
 
 function packageFrontend(version, distDir, outputDir) {
@@ -158,12 +167,14 @@ function packageFrontend(version, distDir, outputDir) {
 
   const files = {};
   collectFiles(distDir, 'dist', files);
-  buildAndSign(manifest, files, outputDir, `napm-frontend-${version}.zip`);
+  return buildAndSign(manifest, files, outputDir, `napm-frontend-${version}.zip`);
 }
 
 // ── 通用：构建 + 签名 ─────────────────────────────────────
 
 function buildAndSign(manifest, files, outputDir, fileName) {
+  const privateKey = loadPrivateKey();
+
   // 1. 计算 SHA256
   const entries = {};
   const sortedPaths = Object.keys(files).sort();
@@ -205,27 +216,33 @@ function buildAndSign(manifest, files, outputDir, fileName) {
   if (encryptionKey) {
     const key = Buffer.from(encryptionKey, 'hex');
     if (key.length !== 32) {
-      console.error(`错误: NAPM_PACKAGE_ENCRYPTION_KEY 必须是 64 位 hex（32 字节），当前 ${key.length} 字节`);
-      process.exit(1);
+      throw new Error(`NAPM_PACKAGE_ENCRYPTION_KEY 必须是 64 位 hex（32 字节），当前 ${key.length} 字节`);
     }
-    const iv = crypto.randomBytes(12);                    // GCM 推荐 12 字节 nonce
+    const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     const encryptedData = Buffer.concat([cipher.update(zipBuffer), cipher.final()]);
-    const authTag = cipher.getAuthTag();                  // 16 字节认证标签
+    const authTag = cipher.getAuthTag();
     finalBuffer = Buffer.concat([
-      Buffer.from('NAPE', 'utf8'),  // 魔数 4 字节
-      iv,                            // 随机 IV 12 字节
-      encryptedData,                 // 密文
-      authTag,                       // GCM 认证标签 16 字节
+      Buffer.from('NAPE', 'utf8'),
+      iv,
+      encryptedData,
+      authTag,
     ]);
     encrypted = true;
   }
 
   fs.writeFileSync(outputPath, finalBuffer);
 
-  console.log(`✅ 已生成: ${outputPath}`);
-  console.log(`   类型: ${manifest.type} | 版本: ${manifest.version}`);
-  console.log(`   文件: ${Object.keys(files).length} 个 | 签名: RSA-SHA256${encrypted ? ' | 加密: AES-256-GCM' : ' | 未加密'}`);
+  return {
+    outputPath,
+    type: manifest.type,
+    version: manifest.version,
+    fileCount: Object.keys(files).length,
+    signed: true,
+    encrypted,
+    sizeBytes: finalBuffer.length,
+    manifest,
+  };
 }
 
 function collectFiles(dir, prefix, files) {
@@ -241,3 +258,12 @@ function collectFiles(dir, prefix, files) {
     }
   }
 }
+
+module.exports = {
+  packageSkill,
+  packageBundle,
+  packageOpenClaw,
+  packageFrontend,
+  buildAndSign,
+  collectFiles,
+};
