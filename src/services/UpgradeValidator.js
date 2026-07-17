@@ -21,13 +21,14 @@ class UpgradeValidator {
    * @param {object} opts
    * @param {Buffer|string} opts.publicKey  RSA 公钥内容（PEM 格式）
    * @param {object} opts.db               better-sqlite3 数据库实例
-   * @param {object} [opts.config]         可选的配置覆盖
+   * @param {object} [opts.config]         可选的配置覆盖（含 encryptionKey）
    */
   constructor(opts) {
     this.publicKey = typeof opts.publicKey === 'string'
       ? Buffer.from(opts.publicKey)
       : opts.publicKey;
     this.db = opts.db;
+    this.config = opts.config || {};
   }
 
   // ──────────────────────────────────────────────────────────
@@ -48,10 +49,20 @@ class UpgradeValidator {
     const errors = [];
     const warnings = [];
 
+    // ── 阶段 0: 解密（如果是加密包）─────────────────────────
+    let zipBufferToProcess = zipBuffer;
+    if (this.config.encryptionKey) {
+      const decrypted = this._decryptPackage(zipBuffer);
+      if (decrypted.error) {
+        return this._reject(taskId, [decrypted.error]);
+      }
+      zipBufferToProcess = decrypted.buffer;
+    }
+
     // ── 阶段 1: 解压 & 解析 manifest ─────────────────────
     let zip, manifest, extractDir;
     try {
-      zip = new AdmZip(zipBuffer);
+      zip = new AdmZip(zipBufferToProcess);
     } catch (err) {
       return this._reject(taskId, [{
         field: 'zip',
@@ -594,6 +605,96 @@ class UpgradeValidator {
       valid: false,
       errors,
     };
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // 私有方法 — AES-256-GCM 解密
+  // ──────────────────────────────────────────────────────────
+
+  /**
+   * 尝试解密加密的升级包。
+   *
+   * 加密格式（tools/package.js 输出）:
+   *   4 bytes  "NAPE" 魔数
+   *   12 bytes 随机 IV (nonce)
+   *   N  bytes 密文 (不含 GCM auth tag)
+   *   16 bytes GCM 认证标签（位于密文末尾）
+   *
+   * 注: GCM auth tag 是 ciphertext 的最后 16 字节，
+   * Node.js 的 decipher 会自动读取末尾的 auth tag。
+   *
+   * @param {Buffer} buffer  可能是加密或明文的 ZIP 内容
+   * @returns {{ buffer: Buffer, error?: undefined } | { error: object }}
+   *   解密成功返回 { buffer }，非加密包返回 { buffer: 原 buffer }，失败返回 { error }
+   */
+  _decryptPackage(buffer) {
+    // 检查魔数——非加密包直接放行
+    const magic = buffer.subarray(0, 4).toString('utf8');
+    if (magic !== 'NAPE') {
+      return { buffer };  // 明文包，不解密
+    }
+
+    if (!this.config.encryptionKey) {
+      return {
+        error: {
+          field: 'encryption',
+          message: '收到加密升级包，但服务端未配置 NAPM_PACKAGE_ENCRYPTION_KEY',
+        },
+      };
+    }
+
+    // 解析结构: MAGIC(4) + IV(12) + CIPHERTEXT(n-16) + AUTH_TAG(16)
+    const iv = buffer.subarray(4, 16);
+    const authTag = buffer.subarray(buffer.length - 16);
+    const encrypted = buffer.subarray(16, buffer.length - 16);
+
+    // 格式检查
+    if (iv.length !== 12) {
+      return {
+        error: {
+          field: 'encryption',
+          message: `加密包格式错误: IV 长度 ${iv.length}，期望 12 字节`,
+        },
+      };
+    }
+
+    let key;
+    try {
+      key = Buffer.from(this.config.encryptionKey, 'hex');
+    } catch (_) {
+      return {
+        error: {
+          field: 'encryption',
+          message: 'NAPM_PACKAGE_ENCRYPTION_KEY 格式无效，必须为 hex（64 位）',
+        },
+      };
+    }
+
+    if (key.length !== 32) {
+      return {
+        error: {
+          field: 'encryption',
+          message: `AES-256 需要 32 字节密钥，当前 ${key.length} 字节`,
+        },
+      };
+    }
+
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+      const decrypted = Buffer.concat([
+        decipher.update(encrypted),
+        decipher.final(),
+      ]);
+      return { buffer: decrypted };
+    } catch (err) {
+      return {
+        error: {
+          field: 'encryption',
+          message: `解密失败: ${err.message}。密钥可能不匹配或包已被篡改。`,
+        },
+      };
+    }
   }
 }
 

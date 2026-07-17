@@ -280,6 +280,45 @@ function buildFullStackPackage(overrides = {}) {
   return buildSignedPackage(manifest, files);
 }
 
+/**
+ * 测试加密密钥文件路径。
+ * 密钥值可在没有配置 NAPM_PACKAGE_ENCRYPTION_KEY 时由测试读取。
+ */
+const TEST_ENCRYPTION_KEY_PATH = path.join(__dirname, 'test-encryption.key');
+
+/**
+ * 将 ZIP Buffer 加密为带 NAPE 魔数的 AES-256-GCM 密文。
+ *
+ * 格式与 tools/package.js 的加密输出完全一致:
+ *   MAGIC(4B "NAPE") + IV(12B) + CIPHERTEXT + AUTH_TAG(16B)
+ *
+ * @param {Buffer} zipBuffer  明文的 ZIP 内容
+ * @param {string} [encryptionKey]  hex 格式的 256-bit 密钥；默认从 test-encryption.key 读取
+ * @returns {Buffer} 加密后的包 Buffer
+ */
+function encryptPackage(zipBuffer, encryptionKey) {
+  let keyHex = encryptionKey;
+  if (!keyHex) {
+    keyHex = fs.readFileSync(TEST_ENCRYPTION_KEY_PATH, 'utf8').trim();
+  }
+  const key = Buffer.from(keyHex, 'hex');
+  if (key.length !== 32) {
+    throw new Error(`加密密钥必须是 32 字节，当前 ${key.length} 字节`);
+  }
+
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(zipBuffer), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return Buffer.concat([
+    Buffer.from('NAPE', 'utf8'),
+    iv,
+    encrypted,
+    authTag,
+  ]);
+}
+
 module.exports = {
   buildSignedPackage,
   buildSkillPackage,
@@ -290,4 +329,6 @@ module.exports = {
   buildChecksumMismatchPackage,
   buildNoManifestPackage,
   buildOpenClawPackage,
+  encryptPackage,
+  TEST_ENCRYPTION_KEY_PATH,
 };

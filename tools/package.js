@@ -186,7 +186,7 @@ function buildAndSign(manifest, files, outputDir, fileName) {
   };
   manifest.files_checksum = { algorithm: 'sha256', entries };
 
-  // 3. 打包
+  // 3. 打包为 ZIP
   fs.mkdirSync(outputDir, { recursive: true });
   const zip = new AdmZip();
   zip.addFile('upgrade-manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
@@ -195,11 +195,37 @@ function buildAndSign(manifest, files, outputDir, fileName) {
   }
 
   const outputPath = path.join(outputDir, fileName);
-  zip.writeZip(outputPath);
+  const zipBuffer = zip.toBuffer();
+
+  // 4. 加密（可选）
+  const encryptionKey = process.env.NAPM_PACKAGE_ENCRYPTION_KEY;
+  let finalBuffer = zipBuffer;
+  let encrypted = false;
+
+  if (encryptionKey) {
+    const key = Buffer.from(encryptionKey, 'hex');
+    if (key.length !== 32) {
+      console.error(`错误: NAPM_PACKAGE_ENCRYPTION_KEY 必须是 64 位 hex（32 字节），当前 ${key.length} 字节`);
+      process.exit(1);
+    }
+    const iv = crypto.randomBytes(12);                    // GCM 推荐 12 字节 nonce
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encryptedData = Buffer.concat([cipher.update(zipBuffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();                  // 16 字节认证标签
+    finalBuffer = Buffer.concat([
+      Buffer.from('NAPE', 'utf8'),  // 魔数 4 字节
+      iv,                            // 随机 IV 12 字节
+      encryptedData,                 // 密文
+      authTag,                       // GCM 认证标签 16 字节
+    ]);
+    encrypted = true;
+  }
+
+  fs.writeFileSync(outputPath, finalBuffer);
 
   console.log(`✅ 已生成: ${outputPath}`);
   console.log(`   类型: ${manifest.type} | 版本: ${manifest.version}`);
-  console.log(`   文件: ${Object.keys(files).length} 个 | 签名: RSA-SHA256`);
+  console.log(`   文件: ${Object.keys(files).length} 个 | 签名: RSA-SHA256${encrypted ? ' | 加密: AES-256-GCM' : ' | 未加密'}`);
 }
 
 function collectFiles(dir, prefix, files) {

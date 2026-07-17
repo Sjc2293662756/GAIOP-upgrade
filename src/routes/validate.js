@@ -36,6 +36,7 @@ function getValidator() {
     validator = new UpgradeValidator({
       publicKey,
       db: getDb(),
+      config,
     });
   }
   return validator;

@@ -22,6 +22,8 @@ const {
   buildChecksumMismatchPackage,
   buildNoManifestPackage,
   buildOpenClawPackage,
+  encryptPackage,
+  TEST_ENCRYPTION_KEY_PATH,
 } = require('./helpers');
 
 // ── 测试 Fixture ───────────────────────────────────────────
@@ -379,5 +381,117 @@ describe('边界情况', () => {
     const result = validator.validate(badBuffer);
     assert.strictEqual(result.valid, false);
     assert.ok(result.errors.some((e) => e.field === 'zip'));
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// 加密包（AES-256-GCM）
+// ══════════════════════════════════════════════════════════════
+
+describe('加密包', () => {
+  // 创建带加密能力的 validator（读取测试密钥）
+  const testKey = fs.readFileSync(TEST_ENCRYPTION_KEY_PATH, 'utf8').trim();
+  const encryptDb = new Database(':memory:');
+  encryptDb.pragma('journal_mode = WAL');
+  encryptDb.pragma('foreign_keys = ON');
+  encryptDb.exec(`
+    CREATE TABLE IF NOT EXISTS components (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    UNIQUE NOT NULL,
+        type        TEXT    NOT NULL CHECK(type IN ('openclaw', 'frontend', 'skill')),
+        version     TEXT    NOT NULL,
+        status      TEXT    DEFAULT 'active' CHECK(status IN ('active', 'upgrading', 'degraded')),
+        install_path TEXT   NOT NULL,
+        updated_at  TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS upgrade_tasks (
+        id          TEXT    PRIMARY KEY,
+        type        TEXT    NOT NULL CHECK(type IN ('skill-single', 'skill-bundle', 'openclaw', 'frontend', 'full-stack')),
+        component   TEXT    NOT NULL,
+        old_version TEXT,
+        new_version TEXT,
+        status      TEXT    DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'success', 'failed', 'rolling_back', 'rolled_back')),
+        steps       TEXT    DEFAULT '[]',
+        started_at  TEXT,
+        finished_at TEXT,
+        operator    TEXT,
+        error       TEXT,
+        created_at  TEXT    DEFAULT (datetime('now'))
+    );
+  `);
+  // 播种组件数据供兼容性检查
+  encryptDb.prepare(`INSERT INTO components (name, type, version, install_path) VALUES (?, 'openclaw', '2026.5.4', '/fake/openclaw')`).run('openclaw');
+  encryptDb.prepare(`INSERT INTO components (name, type, version, install_path) VALUES (?, 'frontend', '2.0.0', '/fake/frontend')`).run('frontend');
+  encryptDb.prepare(`INSERT INTO components (name, type, version, install_path) VALUES (?, 'skill', '1.2.0', '/fake/skills/napm-alert')`).run('napm-alert');
+  encryptDb.prepare(`INSERT INTO components (name, type, version, install_path) VALUES (?, 'skill', '2.0.1', '/fake/skills/napm-diag')`).run('napm-diag');
+
+  const encryptValidator = new UpgradeValidator({
+    publicKey: PUBLIC_KEY,
+    db: encryptDb,
+    config: { encryptionKey: testKey },
+  });
+
+  it('合法加密包应解密并通过全部校验', () => {
+    // 构建一个合法签名包 → 加密 → 传给带密钥的 validator
+    const plainZip = buildSkillPackage();
+    const encrypted = encryptPackage(plainZip, testKey);
+    // 确认加密后的数据不是合法 ZIP（魔数被替换为 NAPE）
+    assert.strictEqual(encrypted.subarray(0, 4).toString('utf8'), 'NAPE');
+
+    const result = encryptValidator.validate(encrypted);
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.type, 'skill-single');
+    assert.strictEqual(result.component, 'napm-diag');
+    assert.strictEqual(result.new_version, '2.1.0');
+  });
+
+  it('明文包（无 NAPE 魔数）仍可正常校验', () => {
+    // 即使 validator 配置了密钥，明文包也应正常工作
+    const plainZip = buildSkillPackage();
+    const result = encryptValidator.validate(plainZip);
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.type, 'skill-single');
+  });
+
+  it('加密包使用错误密钥应拒绝', () => {
+    const plainZip = buildSkillPackage();
+    const encrypted = encryptPackage(plainZip, testKey);
+
+    // 用另一个随机密钥创建的 validator 应该解密失败
+    const wrongKey = 'a'.repeat(62) + 'b' + 'c';  // 63 个 a + bc = 64 hex = 32 bytes
+    const wrongDb = new Database(':memory:');
+    wrongDb.pragma('journal_mode = WAL');
+    wrongDb.exec(`CREATE TABLE IF NOT EXISTS components (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, type TEXT NOT NULL, version TEXT NOT NULL, status TEXT DEFAULT 'active', install_path TEXT NOT NULL, updated_at TEXT)`);
+    const wrongValidator = new UpgradeValidator({
+      publicKey: PUBLIC_KEY,
+      db: wrongDb,
+      config: { encryptionKey: wrongKey },
+    });
+
+    const result = wrongValidator.validate(encrypted);
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some((e) => e.field === 'encryption'));
+    assert.ok(result.errors.some((e) => e.message.includes('解密失败')));
+  });
+
+  it('篡改加密包密文应拒绝（GCM 认证失效）', () => {
+    const plainZip = buildSkillPackage();
+    const encrypted = encryptPackage(plainZip, testKey);
+
+    // 翻转密文区域的第 20 个字节（跳过 MAGIC+IV = 16 字节，修改第 36 字节）
+    const pos = 16 + 20;  // 密文中的第 20 字节
+    encrypted[pos] = encrypted[pos] ^ 0xFF;
+
+    const result = encryptValidator.validate(encrypted);
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some((e) => e.field === 'encryption'));
+    assert.ok(result.errors.some((e) => e.message.includes('解密失败')));
+  });
+
+  it('非加密包但无配置密钥 → 正常校验', () => {
+    // validator 未配置密钥 → 明文包正常通过
+    const plainZip = buildSkillPackage();
+    const result = validator.validate(plainZip);
+    assert.strictEqual(result.valid, true);
   });
 });

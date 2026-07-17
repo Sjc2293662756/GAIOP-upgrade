@@ -14,6 +14,7 @@ const config = {
   smokeTimeoutMs: parseInt(process.env.NAPM_UPGRADE_SMOKE_TIMEOUT_MS || '30000', 10),
   openclawRestartTimeoutMs: parseInt(process.env.NAPM_UPGRADE_OPENCLAW_RESTART_TIMEOUT_MS || '60000', 10),
   logLevel: process.env.NAPM_UPGRADE_LOG_LEVEL || 'info',
+  encryptionKey: process.env.NAPM_PACKAGE_ENCRYPTION_KEY || null,  // 64 位 hex → 32 字节 AES-256 密钥
 };
 
 module.exports = config;
