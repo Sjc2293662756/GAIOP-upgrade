@@ -229,6 +229,61 @@ router.get('/backups', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════
+// DELETE /backups/:id — 删除指定备份
+// ════════════════════════════════════════════════════════════
+router.delete('/backups/:id', (req, res, next) => {
+  const db = getDb();
+  const operator = req.operator || 'admin';
+  const backupId = req.params.id;
+
+  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(backupId);
+  if (!backup) {
+    return next(createError(404, `备份 ${backupId} 不存在`));
+  }
+
+  // 物理删除备份目录
+  const backupPath = backup.backup_path;
+  if (backupPath && fs.existsSync(backupPath)) {
+    try {
+      fs.rmSync(backupPath, { recursive: true, force: true });
+    } catch (err) {
+      return next(createError(500, `删除备份目录失败: ${err.message}`));
+    }
+  }
+
+  // 删除数据库记录
+  db.prepare('DELETE FROM backups WHERE id = ?').run(backupId);
+
+  // 审计日志
+  db.prepare(`
+    INSERT INTO audit_log (action, component, operator, ip, detail)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    'backup_delete',
+    backup.component,
+    operator,
+    req.ip,
+    JSON.stringify({
+      backup_id: backup.id,
+      version: backup.version,
+      backup_path: backupPath,
+      size_bytes: backup.size_bytes,
+    }),
+  );
+
+  res.json({
+    ok: true,
+    message: `已删除备份: ${backup.component} v${backup.version}`,
+    deleted: {
+      id: backup.id,
+      component: backup.component,
+      version: backup.version,
+      backup_path: backupPath,
+    },
+  });
+});
+
+// ════════════════════════════════════════════════════════════
 // 内部辅助
 // ════════════════════════════════════════════════════════════
 
