@@ -293,7 +293,6 @@ router.delete('/backups/:id', (req, res, next) => {
 function _createUpgrader(type, zipBuffer) {
   switch (type) {
     case 'skill-single':
-    case 'skill-bundle':
       return new SkillUpgrader(zipBuffer);
     case 'skill-bundle':
       return new BundleUpgrader(zipBuffer);
