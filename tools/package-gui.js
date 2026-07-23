@@ -512,21 +512,22 @@ const PAGE_HTML = `<!DOCTYPE html>
     <div id="bundleFields">
       <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">📚 <b>Bundle 包</b> — 打包<b>整个 skills/ 目录下所有 Skill</b>。适用于批量升级，合并替换 + 自动注册新 Skill。</p>
       <div class="form-group">
-        <label for="fBundleVersion">版本号</label>
-        <input type="text" id="fBundleVersion" placeholder="如: 3.0.0（SemVer 格式）">
+        <label for="fBundleVersion">合集版本号</label>
+        <input type="text" id="fBundleVersion" placeholder="整套 Skills 的版本，如: 2026.7.0">
+        <div class="form-hint">作为整个 Skill 集合的版本标识，打包后生成 napm-skills-{version}.zip</div>
       </div>
       <div class="form-group">
         <label for="fBundleSourceDir">Skills 根目录</label>
         <div class="input-row">
-          <input type="text" id="fBundleSourceDir" placeholder="如: ./skills（包含多个 Skill 子目录）">
+          <input type="text" id="fBundleSourceDir" placeholder="包含所有 Skill 子目录的父目录，如: ./skills">
           <button class="btn-browse" onclick="openBrowser('fBundleSourceDir')">📁 浏览</button>
         </div>
-        <div class="form-hint">目录下每个子目录视为一个 Skill</div>
+        <div class="form-hint">该目录下每个子目录（如 napm-diag/、napm-monitor/）会被打包为一个独立 Skill</div>
       </div>
       <div class="form-group">
         <label for="fBundleOutputDir">输出目录</label>
         <div class="input-row">
-          <input type="text" id="fBundleOutputDir" placeholder="默认: ./out">
+          <input type="text" id="fBundleOutputDir" placeholder="ZIP 文件输出位置，默认: ./out">
           <button class="btn-browse" onclick="openBrowser('fBundleOutputDir')">📁 浏览</button>
         </div>
       </div>
@@ -536,20 +537,22 @@ const PAGE_HTML = `<!DOCTYPE html>
     <div id="openclawFields">
       <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">⚙️ <b>OpenClaw 包</b> — 打包 <b>OpenClaw CLI / AI 运行时</b>。升级时自动进入维护模式 → systemctl restart → 健康轮询（60s）。</p>
       <div class="form-group">
-        <label for="fOpenClawVersion">版本号</label>
-        <input type="text" id="fOpenClawVersion" placeholder="如: 2026.6.0">
+        <label for="fOpenClawVersion">OpenClaw 版本号</label>
+        <input type="text" id="fOpenClawVersion" placeholder="OpenClaw 发版版本，如: 2026.6.0">
+        <div class="form-hint">建议与 OpenClaw 官方发版号保持一致，打包后生成 openclaw-{version}.zip</div>
       </div>
       <div class="form-group">
-        <label for="fOpenClawSourceDir">源目录</label>
+        <label for="fOpenClawSourceDir">OpenClaw 发行目录</label>
         <div class="input-row">
-          <input type="text" id="fOpenClawSourceDir" placeholder="如: ./openclaw-dist">
+          <input type="text" id="fOpenClawSourceDir" placeholder="OpenClaw 构建/安装后的根目录">
           <button class="btn-browse" onclick="openBrowser('fOpenClawSourceDir')">📁 浏览</button>
         </div>
+        <div class="form-hint">该目录下所有文件（包括 node_modules/、dist/ 等）都会被纳入升级包</div>
       </div>
       <div class="form-group">
         <label for="fOpenClawOutputDir">输出目录</label>
         <div class="input-row">
-          <input type="text" id="fOpenClawOutputDir" placeholder="默认: ./out">
+          <input type="text" id="fOpenClawOutputDir" placeholder="ZIP 文件输出位置，默认: ./out">
           <button class="btn-browse" onclick="openBrowser('fOpenClawOutputDir')">📁 浏览</button>
         </div>
       </div>
@@ -559,13 +562,14 @@ const PAGE_HTML = `<!DOCTYPE html>
     <div id="frontendFields">
       <p style="font-size:13px;color:#666;margin-bottom:16px;padding:8px 12px;background:#f8f9fa;border-radius:6px;">🌐 <b>Frontend 包</b> — 打包 <b>Web 管理后台前端</b>（Vite/Webpack 构建产物 dist/）。静态文件原子替换 + HTTP 冒烟测试。</p>
       <div class="form-group">
-        <label for="fFrontendVersion">版本号</label>
-        <input type="text" id="fFrontendVersion" placeholder="如: 2.2.0（SemVer 格式）">
+        <label for="fFrontendVersion">前端版本号</label>
+        <input type="text" id="fFrontendVersion" placeholder="前端发版版本，如: 2.2.0（SemVer 格式）">
+        <div class="form-hint">建议与前端 package.json 中的版本号一致，打包后生成 napm-frontend-{version}.zip</div>
       </div>
       <div class="form-group">
-        <label for="fFrontendSourceDir">dist 目录</label>
+        <label for="fFrontendSourceDir">前端构建产物目录</label>
         <div class="input-row">
-          <input type="text" id="fFrontendSourceDir" placeholder="如: ./dist（Vite 构建产物）">
+          <input type="text" id="fFrontendSourceDir" placeholder="npm run build 后的 dist/ 目录路径">
           <button class="btn-browse" onclick="openBrowser('fFrontendSourceDir')">📁 浏览</button>
         </div>
         <div class="form-hint">Vite/Webpack build 输出的 dist/ 目录</div>
@@ -573,7 +577,7 @@ const PAGE_HTML = `<!DOCTYPE html>
       <div class="form-group">
         <label for="fFrontendOutputDir">输出目录</label>
         <div class="input-row">
-          <input type="text" id="fFrontendOutputDir" placeholder="默认: ./out">
+          <input type="text" id="fFrontendOutputDir" placeholder="ZIP 文件输出位置，默认: ./out">
           <button class="btn-browse" onclick="openBrowser('fFrontendOutputDir')">📁 浏览</button>
         </div>
       </div>

@@ -75,7 +75,12 @@ router.post('/execute', (req, res, next) => {
   });
 
   // 后台执行
-  getEngine().executeTask(task_id, upgrader).catch((err) => {
+  getEngine().executeTask(task_id, upgrader).then((finalTask) => {
+    // 升级成功 → 清理包文件，失败/回滚的包保留供排查
+    if (finalTask && finalTask.status === 'success') {
+      try { fs.unlinkSync(packagePath); } catch (_) { /* ignore */ }
+    }
+  }).catch((err) => {
     console.error(JSON.stringify({
       timestamp: new Date().toISOString(),
       level: 'error',

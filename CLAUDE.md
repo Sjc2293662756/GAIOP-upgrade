@@ -12,7 +12,7 @@ NAPM 升级服务 — an upgrade orchestration service for the NAPM (观枢·智
 |---|---|
 | `npm start` | Start the service (`node src/index.js`) |
 | `npm run dev` | Start with watch mode (`node --watch src/index.js`) |
-| `npm test` | Run 54 tests — `node --test test/**/*.test.js` (Node.js native test runner) |
+| `npm test` | Run 59 tests — `node --test test/**/*.test.js` (Node.js native test runner) |
 | `npm run db:init` | Initialize the DB schema and seed component registry (`node src/database/init.js`) |
 | `node tools/package.js --help` | CLI 打包签名工具 |
 
@@ -44,8 +44,9 @@ src/
 ├── routes/
 │   ├── health.js            # GET /health
 │   ├── status.js            # GET /api/v1/upgrade/status
-│   ├── validate.js          # POST /api/v1/upgrade/validate (upload + validate + save ZIP)
+│   ├── validate.js          # POST /api/v1/upgrade/validate (上传+校验+保存ZIP到packages/)
 │   └── upgrade.js           # POST /execute, GET /tasks, GET /tasks/:id, POST /rollback, GET /backups
+│                             #   execute 成功后自动清理 packages/<task_id>.zip
 ├── services/
 │   ├── UpgradeValidator.js  # ZIP 解析 → SHA256 校验 → RSA 签名 → 兼容性检查 → 影响评估
 │   ├── UpgradeEngine.js     # 任务状态机 + 步骤追踪 + 文件锁 + 自动/手动回滚
@@ -76,7 +77,12 @@ Phase 1 — 基础设施           ████████████ ✅
 Phase 2 — Skill 升级         ████████████ ✅
 Phase 3 — OpenClaw + 前端    ████████████ ✅
 Phase 4 — 全栈 + 高级        ████████████ ✅
-Phase 5 — 管理前端           ⬜ 未开始
+Phase 5 — 管理前端           ████████████ ✅ 完成
+  ✅ 5.1 Vue 3 + Naive UI 升级管理页面 (UpgradePage.vue)
+  ✅ 5.2 Pinia Store — 9 个 REST API 全部对接
+  ✅ 5.3 Dashboard / 升级中心 / 升级历史 / 回滚中心
+  ✅ 5.4 TypeScript 类型定义 + 路由注册
+  ✅ 5.5 vue-tsc 编译零错误
 ```
 
 ### Phase 1: 基础设施
@@ -172,12 +178,35 @@ pending → running → success
 
 | 文件 | 用例 | 覆盖内容 |
 |---|---|---|
-| `test/upgrade-validator.test.js` | 20 | 包校验: 正常/签名/哈希/版本/兼容性/边界 |
+| `test/upgrade-validator.test.js` | 20+ | 包校验: 正常/签名/哈希/版本/兼容性/边界/加密包 |
 | `test/upgrade-engine.test.js` | 13 | 状态机/Skill 各步骤/自动回滚/手动回滚/任务查询 |
 | `test/bundle-upgrader.test.js` | 8 | 批量升级/合并替换/包外保留/预检失败/空bundle |
 | `test/platform-upgrader.test.js` | 7 | Frontend 升级+首次部署+回滚, OpenClaw preCheck+backup |
 | `test/fullstack-cleaner.test.js` | 6 | FullStack 预检+备份, BackupCleaner 清理+不删除, CLI help |
-| **总计** | **54** | `npm test` — 54 pass / 0 fail, ~40s |
+| **总计** | **59** | `npm test` — 59 pass / 0 fail |
+
+## 升级包生命周期
+
+```
+POST /validate
+    │
+    │  校验通过 → 保存到 packages/<task_id>.zip
+    │  校验失败 → 不落盘
+    ▼
+packages/<task_id>.zip        ← 等待执行
+    │
+    ▼
+POST /execute
+    │
+    │  读取 packages/<task_id>.zip
+    │  执行升级各步骤
+    │
+    ├── success      →  fs.unlinkSync(packagePath)  ← 自动清理
+    ├── failed       →  保留包文件（供排查）          ← 保留
+    └── rolled_back  →  保留包文件（供排查）          ← 保留
+```
+
+> 清理逻辑位于 `src/routes/upgrade.js` 的 execute 路由中——引擎返回 success 状态后自动删除包文件。失败/回滚的包文件不删除，保留在磁盘上供事后排查问题。
 
 ## 升级类型 → Upgrader 映射
 
