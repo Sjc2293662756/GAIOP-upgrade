@@ -52,7 +52,11 @@ class UpgradeValidator {
     // ── 阶段 0: 解密（如果是加密包）─────────────────────────
     let zipBufferToProcess = zipBuffer;
     if (this.config.encryptionKey) {
-      const decrypted = this._decryptPackage(zipBuffer);
+      // Encrypted packages retain the existing in-memory decrypt path. Normal
+      // ZIP packages are opened from the staged file path and never loaded as
+      // one 500MB Buffer by the upload route.
+      const encryptedInput = Buffer.isBuffer(zipBuffer) ? zipBuffer : fs.readFileSync(zipBuffer);
+      const decrypted = this._decryptPackage(encryptedInput);
       if (decrypted.error) {
         return this._reject(taskId, [decrypted.error]);
       }
