@@ -81,7 +81,7 @@ class UpgradeEngine {
    * @param {string} operator 操作人
    * @returns {object} 最终回滚任务记录
    */
-  async executeRollback(taskId, component, targetVersion, upgrader, operator) {
+  async executeRollback(taskId, component, targetVersion, upgrader, operator, suppliedRollbackTaskId = null) {
     const { v4: uuidv4 } = require('uuid');
 
     // 查找对应的组件
@@ -92,13 +92,13 @@ class UpgradeEngine {
       throw Object.assign(new Error(`组件 ${component} 不存在`), { statusCode: 404 });
     }
 
-    const rollbackTaskId = uuidv4();
+    const rollbackTaskId = suppliedRollbackTaskId || uuidv4();
     const currentVersion = componentRow.version;
 
     // 创建回滚任务
     this.db.prepare(`
       INSERT INTO upgrade_tasks (id, type, component, old_version, new_version, status, operator)
-      VALUES (?, 'rollback', ?, ?, ?, 'pending', ?)
+      VALUES (?, 'skill-single', ?, ?, ?, 'pending', ?)
     `).run(rollbackTaskId, component, currentVersion, targetVersion, operator);
 
     // 记录审计

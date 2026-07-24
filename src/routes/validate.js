@@ -9,11 +9,22 @@ const { UpgradeValidator } = require('../services/UpgradeValidator');
 const { createError } = require('../middleware/errorHandler');
 
 const router = express.Router();
+const stagingDir = path.resolve(config.packageStagingRoot);
+
+function removeStagedFile(file) {
+  if (file?.path) fs.rmSync(file.path, { force: true });
+}
 
 // ── Multer 配置 ────────────────────────────────────────────
 // 使用内存存储，避免在磁盘上留下未校验的包
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      fs.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+      cb(null, stagingDir);
+    },
+    filename: (_req, _file, cb) => cb(null, uuidv4() + '.zip'),
+  }),
   limits: {
     fileSize: 500 * 1024 * 1024, // 500 MB 上限
   },
@@ -60,8 +71,9 @@ router.post('/', upload.single('file'), (req, res, next) => {
   // ── 执行校验 ──────────────────────────────────────────
   let result;
   try {
-    result = getValidator().validate(req.file.buffer, { force });
+    result = getValidator().validate(req.file.path, { force });
   } catch (err) {
+    removeStagedFile(req.file);
     return next(createError(500, `校验过程异常: ${err.message}`));
   }
 
@@ -91,7 +103,12 @@ router.post('/', upload.single('file'), (req, res, next) => {
     const packageDir = path.join(config.dbPath, '..', 'packages');
     fs.mkdirSync(packageDir, { recursive: true });
     const packagePath = path.join(packageDir, `${result.task_id}.zip`);
-    fs.writeFileSync(packagePath, req.file.buffer);
+    try {
+      fs.copyFileSync(req.file.path, packagePath);
+    } catch (err) {
+      removeStagedFile(req.file);
+      return next(createError(500, 'Unable to persist the validated upgrade package: ' + err.message));
+    }
 
     db.prepare(`
       INSERT INTO upgrade_tasks (id, type, component, old_version, new_version, status, operator)
@@ -107,6 +124,7 @@ router.post('/', upload.single('file'), (req, res, next) => {
 
     // 获取任务详情用于响应
     const task = db.prepare('SELECT * FROM upgrade_tasks WHERE id = ?').get(result.task_id);
+    removeStagedFile(req.file);
     return res.status(200).json({
       ...result,
       task,
@@ -114,11 +132,13 @@ router.post('/', upload.single('file'), (req, res, next) => {
   }
 
   // ── 校验失败 → 只返回结果，不创建任务 ──────────────────
+  removeStagedFile(req.file);
   return res.status(422).json(result);
 });
 
 // ── Multer 错误处理 ───────────────────────────────────────
-router.use((err, _req, _res, next) => {
+router.use((err, req, _res, next) => {
+  removeStagedFile(req.file);
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return next(createError(413, '升级包大小超过限制（最大 500 MB）'));

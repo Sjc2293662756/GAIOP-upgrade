@@ -18,8 +18,16 @@ const { OpenClawUpgrader } = require('../services/OpenClawUpgrader');
 const { FrontendUpgrader } = require('../services/FrontendUpgrader');
 const { FullStackUpgrader } = require('../services/FullStackUpgrader');
 const { createError } = require('../middleware/errorHandler');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
+
+function isManagedBackupPath(value) {
+  if (typeof value !== 'string' || !value) return false;
+  const root = path.resolve(config.backupRoot);
+  const target = path.resolve(value);
+  return target.startsWith(root + path.sep);
+}
 
 // ── 懒加载引擎 ─────────────────────────────────────────────
 let engine = null;
@@ -158,6 +166,13 @@ router.post('/rollback', (req, res, next) => {
   }
 
   const db = getDb();
+  const rollbackComponent = db.prepare('SELECT type FROM components WHERE name = ?').get(component);
+  if (!rollbackComponent) {
+    return next(createError(404, 'Component not found'));
+  }
+  if (rollbackComponent.type !== 'skill') {
+    return next(createError(400, 'Manual rollback is currently supported for Skill components only'));
+  }
 
   // 确定目标版本
   let targetVersion = target_version;
@@ -185,17 +200,22 @@ router.post('/rollback', (req, res, next) => {
   }
 
   // 创建回滚 upgrader（简化的，只需要 rollback + smokeTest 方法）
+  if (!isManagedBackupPath(backup.backup_path)) {
+    return next(createError(400, 'Rollback backup is outside the managed backup directory'));
+  }
   const upgrader = _createRollbackUpgrader(component, backup.backup_path);
+  const rollbackTaskId = uuidv4();
 
   // 异步执行
   res.status(202).json({
     component,
     target_version: targetVersion,
+    task_id: rollbackTaskId,
     status: 'accepted',
     message: `正在回滚 ${component} 到版本 ${targetVersion}`,
   });
 
-  getEngine().executeRollback(task_id || '-', component, targetVersion, upgrader, operator)
+  getEngine().executeRollback(task_id || '-', component, targetVersion, upgrader, operator, rollbackTaskId)
     .catch((err) => {
       console.error(JSON.stringify({
         timestamp: new Date().toISOString(),
@@ -243,6 +263,9 @@ router.delete('/backups/:id', (req, res, next) => {
 
   // 物理删除备份目录
   const backupPath = backup.backup_path;
+  if (!isManagedBackupPath(backupPath)) {
+    return next(createError(400, 'Backup is outside the managed backup directory'));
+  }
   if (backupPath && fs.existsSync(backupPath)) {
     try {
       fs.rmSync(backupPath, { recursive: true, force: true });
@@ -266,7 +289,6 @@ router.delete('/backups/:id', (req, res, next) => {
     JSON.stringify({
       backup_id: backup.id,
       version: backup.version,
-      backup_path: backupPath,
       size_bytes: backup.size_bytes,
     }),
   );
@@ -278,7 +300,6 @@ router.delete('/backups/:id', (req, res, next) => {
       id: backup.id,
       component: backup.component,
       version: backup.version,
-      backup_path: backupPath,
     },
   });
 });
@@ -314,6 +335,9 @@ function _createRollbackUpgrader(component, backupPath) {
   const fs = require('fs');
   const path = require('path');
   const config = require('../config');
+  if (!isManagedBackupPath(backupPath)) {
+    throw new Error('Rollback backup is outside the managed backup directory');
+  }
 
   return {
     async rollback(ctx) {
