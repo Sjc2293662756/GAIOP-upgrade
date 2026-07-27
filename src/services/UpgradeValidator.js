@@ -85,6 +85,7 @@ class UpgradeValidator {
 
     // ── 阶段 2: 校验 manifest 字段 ────────────────────────
     this._validateManifestFields(manifest, errors);
+    this._validateArchiveLayout(zip, manifest, errors);
 
     // ── 阶段 3: SHA256 文件校验 ───────────────────────────
     if (manifest.files_checksum) {
@@ -211,6 +212,25 @@ class UpgradeValidator {
         message: 'skill-single 类型必须指定 component 字段',
       });
     }
+    if (manifest.component && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(manifest.component)) {
+      errors.push({
+        field: 'component',
+        message: 'component 只能包含字母、数字、点、下划线和连字符',
+      });
+    }
+    const fixedComponents = {
+      openclaw: 'openclaw',
+      frontend: 'frontend',
+      'skill-bundle': 'skills',
+    };
+    if (fixedComponents[manifest.type]
+      && manifest.component
+      && manifest.component !== fixedComponents[manifest.type]) {
+      errors.push({
+        field: 'component',
+        message: `${manifest.type} 包的 component 必须为 ${fixedComponents[manifest.type]}`,
+      });
+    }
 
     // version 必须是合法 semver
     if (manifest.version && !semver.valid(manifest.version)) {
@@ -240,6 +260,59 @@ class UpgradeValidator {
         errors.push({ field: 'files_checksum.entries', message: '缺少文件校验和列表' });
       }
     }
+  }
+
+  _validateArchiveLayout(zip, manifest, errors) {
+    const declared = manifest.files_checksum?.entries;
+    if (!declared || typeof declared !== 'object') return;
+
+    const skillComponent = typeof manifest.component === 'string'
+      ? manifest.component.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      : '[^/]+';
+    const allowedPatterns = {
+      'skill-single': [new RegExp(`^skills/${skillComponent}/[^/].*`)],
+      'skill-bundle': [/^skills\/[^/]+\/[^/].*/],
+      openclaw: [/^dist\/[^/].*/, /^config\/[^/].*/, /^package\.json$/],
+      frontend: [/^dist\/[^/].*/],
+      'full-stack': [/^openclaw\/[^/].*/, /^skills\/[^/].*/, /^frontend\/[^/].*/],
+    };
+    const patterns = allowedPatterns[manifest.type];
+    const seen = new Set();
+
+    for (const entry of zip.getEntries()) {
+      const name = String(entry.entryName || '');
+      if (!this._isSafeArchivePath(name)) {
+        errors.push({ field: 'archive_path', message: `升级包包含不安全路径: "${name}"` });
+        continue;
+      }
+      if (entry.isDirectory || name === 'upgrade-manifest.json') continue;
+      if (seen.has(name)) {
+        errors.push({ field: 'archive_path', message: `升级包包含重复文件路径: "${name}"` });
+        continue;
+      }
+      seen.add(name);
+      if (!Object.prototype.hasOwnProperty.call(declared, name)) {
+        errors.push({ field: 'files_checksum', message: `文件 "${name}" 未在校验和清单中声明` });
+      }
+      if (patterns && !patterns.some((pattern) => pattern.test(name))) {
+        errors.push({ field: 'archive_layout', message: `文件 "${name}" 不属于 ${manifest.type} 包允许的目录` });
+      }
+    }
+
+    for (const name of Object.keys(declared)) {
+      if (!this._isSafeArchivePath(name)) {
+        errors.push({ field: 'archive_path', message: `校验和清单包含不安全路径: "${name}"` });
+      }
+    }
+  }
+
+  _isSafeArchivePath(value) {
+    if (!value || value.length > 512 || value.includes('\\') || value.includes('\0')) return false;
+    if (value.startsWith('/') || /^[A-Za-z]:/.test(value)) return false;
+    const segments = value.split('/');
+    const pathSegments = value.endsWith('/') ? segments.slice(0, -1) : segments;
+    return pathSegments.length > 0
+      && pathSegments.every((segment) => segment && segment !== '.' && segment !== '..');
   }
 
   // ──────────────────────────────────────────────────────────

@@ -7,7 +7,16 @@ const config = {
   skillsRoot: process.env.NAPM_UPGRADE_SKILLS_ROOT || '/home/netinside/.openclaw/workspace/skills',
   pluginRoot: process.env.NAPM_UPGRADE_PLUGIN_ROOT || '/home/netinside/.openclaw/extensions/napm-openclaw-plugin',
   openclawRoot: process.env.NAPM_UPGRADE_OPENCLAW_ROOT || '/home/netinside/.npm-global/lib/node_modules/openclaw',
-  frontendRoot: process.env.NAPM_UPGRADE_FRONTEND_ROOT || '/var/www/napm-admin',
+  // Only the built frontend directory may be replaced. Pointing this at the
+  // GAIOP-Admin application root would also replace the BFF and runtime files.
+  frontendRoot: process.env.NAPM_UPGRADE_FRONTEND_ROOT || '/opt/gaiop/admin/dist',
+  frontendHealthUrl: process.env.NAPM_UPGRADE_FRONTEND_HEALTH_URL || 'http://127.0.0.1:3000/api/health',
+  openclawHealthUrl: process.env.NAPM_UPGRADE_OPENCLAW_HEALTH_URL || 'http://127.0.0.1:18789/health',
+  openclawRestartHelper: process.env.NAPM_UPGRADE_OPENCLAW_RESTART_HELPER || '/usr/local/libexec/gaiop-upgrade-restart-openclaw',
+  runtimeOwner: process.env.NAPM_UPGRADE_RUNTIME_OWNER || 'netinside',
+  runtimeGroup: process.env.NAPM_UPGRADE_RUNTIME_GROUP || 'netinside',
+  frontendOwner: process.env.NAPM_UPGRADE_FRONTEND_OWNER || 'gaiop',
+  frontendGroup: process.env.NAPM_UPGRADE_FRONTEND_GROUP || 'gaiop',
   publicKeyPath: process.env.NAPM_UPGRADE_PUBLIC_KEY_PATH || './config/public.pem',
   backupRetention: parseInt(process.env.NAPM_UPGRADE_BACKUP_RETENTION || '5', 10),
   lockDir: process.env.NAPM_UPGRADE_LOCK_DIR || '/tmp',

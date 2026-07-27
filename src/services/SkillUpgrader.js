@@ -13,6 +13,7 @@ const { execSync } = require('child_process');
 const AdmZip = require('adm-zip');
 const { getDb } = require('../database/connection');
 const config = require('../config');
+const { applyOwnership } = require('./Ownership');
 
 class SkillUpgrader {
   /**
@@ -162,6 +163,8 @@ class SkillUpgrader {
       this._copyDir(targetPath, pluginSkillsPath);
       this._removeDir(pluginSkillsPath + '.old');
     }
+    applyOwnership(targetPath, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
+    if (pluginSkillsPath) applyOwnership(pluginSkillsPath, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
 
     return { message: `文件替换完成 (${skillEntries.length} 个文件)` };
   }
@@ -281,6 +284,8 @@ class SkillUpgrader {
       this._copyDir(targetPath, pluginSkillsPath);
       this._removeDir(pluginSkillsPath + '.broken');
     }
+    applyOwnership(targetPath, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
+    if (pluginSkillsPath) applyOwnership(pluginSkillsPath, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
 
     // 触发热加载
     const skillMdPath = path.join(targetPath, 'SKILL.md');

@@ -50,7 +50,10 @@ before(() => {
     skillsRoot: skillsDir,
     pluginRoot: null,
     openclawRoot: path.join(tmpDir, 'openclaw'),
-    frontendRoot: path.join(tmpDir, 'frontend'),
+    frontendRoot: path.join(tmpDir, 'frontend', 'dist'),
+    frontendHealthUrl: 'http://127.0.0.1:9/health',
+    openclawHealthUrl: 'http://127.0.0.1:9/health',
+    openclawRestartHelper: process.execPath,
     publicKeyPath: path.join(__dirname, '..', 'config', 'public.pem'),
     backupRetention: 5,
     lockDir: lockDir,
@@ -110,9 +113,7 @@ before(() => {
     );
   `);
 
-  engine = new UpgradeEngine();
-  // 重写 engine 的 db 引用指向测试 DB（因为 UpgradeEngine 用了 getDb()）
-  engine.db = db;
+  engine = new UpgradeEngine({ db });
 });
 
 after(() => {

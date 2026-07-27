@@ -9,10 +9,11 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 const AdmZip = require('adm-zip');
 const { getDb } = require('../database/connection');
 const config = require('../config');
+const { applyOwnership } = require('./Ownership');
 
 class FrontendUpgrader {
   constructor(zipBuffer, opts = {}) {
@@ -33,6 +34,9 @@ class FrontendUpgrader {
 
     // 2. 验证前端目录
     const targetPath = this.cfg.frontendRoot;
+    if (path.basename(path.resolve(targetPath)) !== 'dist') {
+      throw new Error(`前端升级目录必须指向独立 dist 目录: ${targetPath}`);
+    }
     if (!fs.existsSync(targetPath)) {
       // 首次部署，目录可能不存在
       fs.mkdirSync(targetPath, { recursive: true });
@@ -128,6 +132,7 @@ class FrontendUpgrader {
       }
       throw new Error(`原子替换失败: ${err.message}`);
     }
+    applyOwnership(targetPath, this.cfg.frontendOwner, this.cfg.frontendGroup);
 
     return { message: `文件替换完成 (${distEntries.length} 个文件)` };
   }
@@ -147,10 +152,10 @@ class FrontendUpgrader {
 
     // HTTP 检查（如果 curl 可用）
     try {
-      const httpCode = execSync(
-        'curl -s -o /dev/null -w "%{http_code}" http://localhost/napm-admin/index.html --max-time 5',
-        { encoding: 'utf8', timeout: 10000 },
-      ).trim();
+      const httpCode = execFileSync('curl', [
+        '-s', '-o', '/dev/null', '-w', '%{http_code}',
+        '--max-time', '5', this.cfg.frontendHealthUrl,
+      ], { encoding: 'utf8', timeout: 10000 }).trim();
       if (httpCode !== '200') {
         throw new Error(`HTTP 状态码: ${httpCode}`);
       }
@@ -205,6 +210,7 @@ class FrontendUpgrader {
       }
       throw new Error(`回滚恢复失败: ${err.message}`);
     }
+    applyOwnership(targetPath, this.cfg.frontendOwner, this.cfg.frontendGroup);
 
     // 恢复 DB 版本
     const component = ctx.state.component;

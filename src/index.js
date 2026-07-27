@@ -12,8 +12,10 @@ const validateRouter = require('./routes/validate');
 const upgradeRouter = require('./routes/upgrade');
 
 const backupCleaner = require('./services/BackupCleaner');
+const { assertProductionSafety } = require('./runtime-safety');
 
 // ── 数据库初始化 ──────────────────────────────────────────────
+assertProductionSafety();
 initSchema();
 seedComponents();
 backupCleaner.start();
@@ -41,7 +43,7 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 // ── 启动服务 ──────────────────────────────────────────────────
-app.listen(config.port, () => {
+app.listen(config.port, process.env.GAIOP_UPGRADE_HOST || '127.0.0.1', () => {
   console.log(JSON.stringify({
     timestamp: new Date().toISOString(),
     level: 'info',

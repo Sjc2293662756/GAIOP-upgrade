@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+runtime_dir=/run/user/1000
+service=openclaw-gateway.service
+
+if [ "${1:-}" = "--check" ]; then
+  exec runuser -u netinside -- env XDG_RUNTIME_DIR="$runtime_dir" \
+    systemctl --user is-active --quiet "$service"
+fi
+
+if [ "$#" -ne 0 ]; then
+  echo "unexpected arguments" >&2
+  exit 64
+fi
+
+exec runuser -u netinside -- env XDG_RUNTIME_DIR="$runtime_dir" \
+  systemctl --user restart "$service"

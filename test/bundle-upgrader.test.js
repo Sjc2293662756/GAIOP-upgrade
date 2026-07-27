@@ -40,7 +40,10 @@ before(() => {
     skillsRoot: skillsDir,
     pluginRoot: null,
     openclawRoot: path.join(tmpDir, 'openclaw'),
-    frontendRoot: path.join(tmpDir, 'frontend'),
+    frontendRoot: path.join(tmpDir, 'frontend', 'dist'),
+    frontendHealthUrl: 'http://127.0.0.1:9/health',
+    openclawHealthUrl: 'http://127.0.0.1:9/health',
+    openclawRestartHelper: process.execPath,
     publicKeyPath: path.join(__dirname, '..', 'config', 'public.pem'),
     lockDir,
   };
@@ -54,8 +57,7 @@ before(() => {
     CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, component TEXT, task_id TEXT, operator TEXT, ip TEXT, detail TEXT DEFAULT '{}', created_at TEXT);
   `);
 
-  engine = new UpgradeEngine();
-  engine.db = db;
+  engine = new UpgradeEngine({ db });
 });
 
 after(() => {

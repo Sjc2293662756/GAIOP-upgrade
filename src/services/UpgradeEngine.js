@@ -29,8 +29,8 @@ const STEPS = ['pre_check', 'backup', 'replace', 'reload', 'smoke_test', 'finali
 const VALID_STATUSES = ['pending', 'running', 'success', 'failed', 'rolling_back', 'rolled_back'];
 
 class UpgradeEngine {
-  constructor() {
-    this.db = getDb();
+  constructor({ db } = {}) {
+    this.db = db || getDb();
   }
 
   // ──────────────────────────────────────────────────────────

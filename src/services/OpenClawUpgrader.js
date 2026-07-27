@@ -13,11 +13,12 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 const AdmZip = require('adm-zip');
 const { getDb } = require('../database/connection');
 const config = require('../config');
 const maintenance = require('./MaintenanceMode');
+const { applyOwnership } = require('./Ownership');
 
 class OpenClawUpgrader {
   constructor(zipBuffer, opts = {}) {
@@ -43,8 +44,8 @@ class OpenClawUpgrader {
       throw new Error(`OpenClaw 安装目录不存在: ${targetPath}`);
     }
 
-    // 3. 验证 systemctl 可用（Linux）
-    this._checkSystemctl();
+    // 3. 验证受控重启入口（Linux 生产环境）
+    this._checkRestartHelper();
 
     // 4. 验证组件已注册
     const component = this.db.prepare(
@@ -177,19 +178,19 @@ class OpenClawUpgrader {
 
     // npm install（如 package.json 有变化）
     this._tryNpmInstall(targetPath);
+    applyOwnership(targetPath, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
 
     return { message: `文件替换完成 (${distEntries.length} 个文件)` };
   }
 
   reload(ctx) {
-    // systemctl restart openclaw
     try {
-      execSync('systemctl restart openclaw', { encoding: 'utf8', timeout: 30000 });
+      this._restartOpenClaw();
     } catch (err) {
-      throw new Error(`systemctl restart openclaw 失败: ${err.message}`);
+      throw new Error(`OpenClaw Gateway 重启失败: ${err.message}`);
     }
 
-    return { message: 'systemctl restart openclaw 已执行' };
+    return { message: 'OpenClaw Gateway 受控重启已执行' };
   }
 
   smokeTest(ctx) {
@@ -243,7 +244,7 @@ class OpenClawUpgrader {
 
     if (!backupPath || !fs.existsSync(backupPath)) {
       // 即使没有备份，也要尝试保持服务运行
-      try { execSync('systemctl restart openclaw', { timeout: 30000 }); } catch (_) {}
+      try { this._restartOpenClaw(); } catch (_) {}
       throw new Error('回滚失败: 备份目录不存在或未执行备份步骤');
     }
 
@@ -264,6 +265,7 @@ class OpenClawUpgrader {
       }
       throw new Error(`回滚恢复失败: ${err.message}`);
     }
+    applyOwnership(targetPath, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
 
     // 恢复配置文件
     const configDir = path.join(path.dirname(targetPath), '..', '.openclaw');
@@ -276,7 +278,7 @@ class OpenClawUpgrader {
 
     // 重启
     try {
-      execSync('systemctl restart openclaw', { encoding: 'utf8', timeout: 30000 });
+      this._restartOpenClaw();
     } catch (err) {
       throw new Error(`回滚后重启失败: ${err.message}`);
     }
@@ -328,20 +330,28 @@ class OpenClawUpgrader {
     }
   }
 
-  _checkSystemctl() {
-    try {
-      execSync('which systemctl', { encoding: 'utf8', timeout: 5000 });
-    } catch (_) {
-      // 非 Linux / 开发环境 允许跳过
+  _checkRestartHelper() {
+    if (process.platform !== 'linux') return;
+    const helper = this.cfg.openclawRestartHelper;
+    if (!helper || !path.isAbsolute(helper) || !fs.existsSync(helper)) {
+      throw new Error(`OpenClaw 受控重启入口不存在: ${helper || '未配置'}`);
     }
+    fs.accessSync(helper, fs.constants.X_OK);
+  }
+
+  _restartOpenClaw() {
+    const helper = this.cfg.openclawRestartHelper;
+    if (!helper || !path.isAbsolute(helper)) {
+      throw new Error('OpenClaw 受控重启入口未配置');
+    }
+    execFileSync(helper, [], { encoding: 'utf8', timeout: 30000 });
   }
 
   _httpHealthCheck() {
-    // 尝试连接 OpenClaw Gateway 的健康端点
-    const result = execSync(
-      'curl -s -o /dev/null -w "%{http_code}" http://localhost:18789/health --max-time 5',
-      { encoding: 'utf8', timeout: 10000 },
-    ).trim();
+    const result = execFileSync('curl', [
+      '-s', '-o', '/dev/null', '-w', '%{http_code}',
+      '--max-time', '5', this.cfg.openclawHealthUrl,
+    ], { encoding: 'utf8', timeout: 10000 }).trim();
     return result === '200';
   }
 

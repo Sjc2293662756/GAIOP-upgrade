@@ -1,0 +1,40 @@
+[Unit]
+Description=GAIOP controlled upgrade orchestration service
+After=network-online.target gaiop-admin.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/gaiop/upgrade
+EnvironmentFile=/etc/gaiop/upgrade.env
+ExecStart=/usr/local/bin/node /opt/gaiop/upgrade/src/index.js
+Restart=on-failure
+RestartSec=5
+UMask=0027
+RuntimeDirectory=gaiop-upgrade
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/gaiop/upgrade
+ReadWritePaths=/var/backups/gaiop/upgrade
+ReadWritePaths=/home/netinside/.openclaw/workspace
+ReadWritePaths=/home/netinside/.openclaw/extensions/napm-openclaw-plugin
+ReadWritePaths=/home/netinside/.npm-global/lib/node_modules
+ReadWritePaths=/opt/gaiop/admin
+ReadWritePaths=/run/user/1000
+ReadWritePaths=/run/gaiop-upgrade
+
+[Install]
+WantedBy=multi-user.target

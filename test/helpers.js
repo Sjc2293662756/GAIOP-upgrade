@@ -12,15 +12,24 @@ const path = require('path');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 
-// 测试用的 RSA 私钥（与 config/public.pem 配对）
-const PRIVATE_KEY_PATH = path.join(__dirname, '..', 'config', 'private.pem');
-
-let _privateKeyCache = null;
-function getPrivateKey() {
-  if (!_privateKeyCache) {
-    _privateKeyCache = fs.readFileSync(PRIVATE_KEY_PATH, 'utf8');
+let _testKeyPair = null;
+function getTestKeyPair() {
+  if (!_testKeyPair) {
+    _testKeyPair = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
   }
-  return _privateKeyCache;
+  return _testKeyPair;
+}
+
+function getPrivateKey() {
+  return getTestKeyPair().privateKey;
+}
+
+function getTestPublicKey() {
+  return getTestKeyPair().publicKey;
 }
 
 /**
@@ -331,4 +340,5 @@ module.exports = {
   buildOpenClawPackage,
   encryptPackage,
   TEST_ENCRYPTION_KEY_PATH,
+  getTestPublicKey,
 };

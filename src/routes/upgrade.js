@@ -17,6 +17,7 @@ const { BundleUpgrader } = require('../services/BundleUpgrader');
 const { OpenClawUpgrader } = require('../services/OpenClawUpgrader');
 const { FrontendUpgrader } = require('../services/FrontendUpgrader');
 const { FullStackUpgrader } = require('../services/FullStackUpgrader');
+const { cleanupSuccessfulPackage } = require('../services/PackageCleaner');
 const { createError } = require('../middleware/errorHandler');
 const { v4: uuidv4 } = require('uuid');
 
@@ -85,9 +86,7 @@ router.post('/execute', (req, res, next) => {
   // 后台执行
   getEngine().executeTask(task_id, upgrader).then((finalTask) => {
     // 升级成功 → 清理包文件，失败/回滚的包保留供排查
-    if (finalTask && finalTask.status === 'success') {
-      try { fs.unlinkSync(packagePath); } catch (_) { /* ignore */ }
-    }
+    cleanupSuccessfulPackage(finalTask, packagePath);
   }).catch((err) => {
     console.error(JSON.stringify({
       timestamp: new Date().toISOString(),

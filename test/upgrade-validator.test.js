@@ -22,16 +22,14 @@ const {
   buildChecksumMismatchPackage,
   buildNoManifestPackage,
   buildOpenClawPackage,
+  buildSignedPackage,
   encryptPackage,
   TEST_ENCRYPTION_KEY_PATH,
+  getTestPublicKey,
 } = require('./helpers');
 
 // ── 测试 Fixture ───────────────────────────────────────────
-const PUBLIC_KEY = fs.readFileSync(
-  path.join(__dirname, '..', 'config', 'public.pem'),
-  'utf8',
-);
-
+const PUBLIC_KEY = getTestPublicKey();
 let db;
 let validator;
 
@@ -225,6 +223,40 @@ describe('SHA256 文件校验', () => {
     const result = validator.validate(zip);
     assert.strictEqual(result.valid, false);
     assert.ok(result.errors.some((e) => e.field === 'files_checksum'));
+  });
+
+  it('包含路径片段的 component 应失败', () => {
+    const zip = buildSkillPackage({ component: '../../escape', version: '3.0.0' });
+    const result = validator.validate(zip);
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some((e) => e.field === 'component'));
+  });
+
+  it('已签名但包含类型外文件的包应失败', () => {
+    const zip = buildSignedPackage({
+      type: 'frontend',
+      component: 'frontend',
+      version: '2.2.0',
+      compatibility: {},
+    }, {
+      'dist/index.html': '<!doctype html><title>ok</title>',
+      'server/replace.js': 'module.exports = true',
+    });
+    const result = validator.validate(zip);
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some((e) => e.field === 'archive_layout'));
+  });
+
+  it('路径穿越文件名应在执行前被拒绝', () => {
+    const fakeZip = {
+      getEntries: () => [{ entryName: 'dist/../../escape.txt', isDirectory: false }],
+    };
+    const errors = [];
+    validator._validateArchiveLayout(fakeZip, {
+      type: 'frontend',
+      files_checksum: { entries: { 'dist/../../escape.txt': '0'.repeat(64) } },
+    }, errors);
+    assert.ok(errors.some((e) => e.field === 'archive_path'));
   });
 });
 

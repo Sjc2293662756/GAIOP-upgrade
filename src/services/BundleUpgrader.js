@@ -17,6 +17,7 @@ const { execSync } = require('child_process');
 const AdmZip = require('adm-zip');
 const { getDb } = require('../database/connection');
 const config = require('../config');
+const { applyOwnership } = require('./Ownership');
 
 class BundleUpgrader {
   /**
@@ -178,6 +179,7 @@ class BundleUpgrader {
       }
       throw new Error(`原子替换失败: ${err.message}`);
     }
+    applyOwnership(skillsRoot, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
 
     return { message: `文件替换完成 (${skillEntries.length} 个文件, ${ctx.state.skillNames.length} 个 Skill)` };
   }
@@ -314,6 +316,7 @@ class BundleUpgrader {
       }
       throw new Error(`回滚恢复失败: ${err.message}`);
     }
+    applyOwnership(skillsRoot, this.cfg.runtimeOwner, this.cfg.runtimeGroup);
 
     // 批量 touch
     const skillInfos = ctx.state.skillInfos || [];
