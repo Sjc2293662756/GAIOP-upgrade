@@ -1,5 +1,7 @@
 # GAIOP-upgrade
 
+> 当前详细文档入口：[docs/README.md](docs/README.md)；237生产映射与安全边界见[2026-07-30生产适配基线](docs/2026-07-30-GAIOP升级模块237生产适配基线.md)。`docs` 中2026-07-16至17的NAPM路径和Caddy直连方案仅保留为历史设计。
+
 GAIOP 系统升级模块。浏览器不直接访问本服务；正式链路为：
 
 ```text
