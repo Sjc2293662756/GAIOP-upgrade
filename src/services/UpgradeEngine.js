@@ -22,6 +22,7 @@
 const path = require('path');
 const { getDb } = require('../database/connection');
 const config = require('../config');
+const { checkReportAttributionGuard } = require('./ReportAttributionGuard');
 
 // ── 步骤定义 ──────────────────────────────────────────────
 const STEPS = ['pre_check', 'backup', 'replace', 'reload', 'smoke_test', 'finalize'];
@@ -468,7 +469,12 @@ class UpgradeEngine {
       case 'backup':     return upgrader.backup ? upgrader.backup(ctx) : { message: '跳过' };
       case 'replace':    return upgrader.replace ? upgrader.replace(ctx) : { message: '跳过' };
       case 'reload':     return upgrader.reload ? upgrader.reload(ctx) : { message: '跳过' };
-      case 'smoke_test': return upgrader.smokeTest ? upgrader.smokeTest(ctx) : { message: '跳过' };
+      case 'smoke_test': {
+        const result = upgrader.smokeTest ? await upgrader.smokeTest(ctx) : { message: '跳过' };
+        const guard = checkReportAttributionGuard(ctx.config || config);
+        if (!guard.enabled) return result;
+        return { message: `${result?.message || '冒烟测试通过'}；报告归属适配索引正常 (${guard.entries} 条)` };
+      }
       case 'finalize':   return upgrader.finalize ? upgrader.finalize(ctx) : { message: '跳过' };
       default:           return { message: '未知步骤' };
     }

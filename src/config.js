@@ -27,6 +27,9 @@ const config = {
   // ISO 内部网络中由 GAIOP Admin BFF 调用时使用；生产部署应配置此值。
   internalAuthToken: process.env.GAIOP_UPGRADE_INTERNAL_TOKEN || '',
   packageStagingRoot: process.env.NAPM_UPGRADE_PACKAGE_STAGING_ROOT || './data/staging',
+  reportAttributionRequired: process.env.GAIOP_REPORT_ATTRIBUTION_REQUIRED === 'true',
+  reportAttributionIndexPath: process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH || '/var/lib/gaiop/report-attribution/index.json',
+  reportAttributionMaxAgeMs: parseInt(process.env.GAIOP_REPORT_ATTRIBUTION_MAX_AGE_MS || '30000', 10),
 };
 
 module.exports = config;
