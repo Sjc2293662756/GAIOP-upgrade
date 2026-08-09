@@ -7,6 +7,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test test/**/*.test.js",
+    "cleanup:retention": "node src/retention-cleanup.js",
     "db:init": "node src/database/init.js",
     "package:gui": "node tools/package-gui.js",
     "electron": "electron .",
@@ -47,7 +48,6 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "multer": "^1.4.5-lts.1",
-    "node-cron": "^3.0.3",
     "proper-lockfile": "^4.1.2",
     "semver": "^7.6.3",
     "uuid": "^10.0.0"

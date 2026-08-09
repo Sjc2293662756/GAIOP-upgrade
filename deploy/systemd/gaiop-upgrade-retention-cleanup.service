@@ -1,0 +1,29 @@
+[Unit]
+Description=GAIOP upgrade retention cleanup
+After=gaiop-upgrade.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/gaiop/upgrade
+EnvironmentFile=/etc/gaiop/upgrade.env
+ExecStart=/usr/local/bin/node /opt/gaiop/upgrade/src/retention-cleanup.js
+UMask=0027
+RuntimeDirectory=gaiop-upgrade-retention
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/gaiop/upgrade
+ReadWritePaths=/var/backups/gaiop/upgrade
+ReadWritePaths=/run/gaiop-upgrade-retention

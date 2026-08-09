@@ -17,6 +17,8 @@ GAIOP Admin 页面 -> Admin BFF -> 回环地址上的 GAIOP-upgrade
 - OpenClaw 重启只能通过固定的用户级 systemd 辅助程序执行。
 - ZIP 包会校验签名、清单、组件名称、声明文件、重复条目和路径穿越。
 - 成功任务删除上传包；失败或回滚任务保留包供排查。
+- 独立留存清理 one-shot 与 systemd timer 只管理升级服务自己的 `staging`、严格 UUID 升级包和受控回滚备份；生产自动删除总开关默认关闭。
+- `failed`、`rolled_back` 包至少保留 7 天；备份同时满足超过 90 天且超出每组件最近 5 个可用备份组时才可清理。
 
 ## 237 运行映射
 
@@ -33,6 +35,7 @@ GAIOP Admin 页面 -> Admin BFF -> 回环地址上的 GAIOP-upgrade
 | 升级服务 | `gaiop-upgrade.service` |
 
 systemd 单元、环境变量示例和固定 Gateway 辅助程序位于 `deploy/`。正式环境文件不得提交到 Git。
+旧的进程内定时备份清理已移除；自动清理只允许由 `gaiop-upgrade-retention-cleanup.timer` 触发，且首次真实启用前必须完成生产只读候选核查并单独确认。
 
 ## 验证
 

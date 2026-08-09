@@ -11,14 +11,12 @@ const statusRouter = require('./routes/status');
 const validateRouter = require('./routes/validate');
 const upgradeRouter = require('./routes/upgrade');
 
-const backupCleaner = require('./services/BackupCleaner');
 const { assertProductionSafety } = require('./runtime-safety');
 
 // ── 数据库初始化 ──────────────────────────────────────────────
 assertProductionSafety();
 initSchema();
 seedComponents();
-backupCleaner.start();
 
 // ── Express 应用 ──────────────────────────────────────────────
 const app = express();

@@ -18,16 +18,14 @@ const { OpenClawUpgrader } = require('../services/OpenClawUpgrader');
 const { FrontendUpgrader } = require('../services/FrontendUpgrader');
 const { FullStackUpgrader } = require('../services/FullStackUpgrader');
 const { cleanupSuccessfulPackage } = require('../services/PackageCleaner');
+const backupCleaner = require('../services/BackupCleaner');
 const { createError } = require('../middleware/errorHandler');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
 function isManagedBackupPath(value) {
-  if (typeof value !== 'string' || !value) return false;
-  const root = path.resolve(config.backupRoot);
-  const target = path.resolve(value);
-  return target.startsWith(root + path.sep);
+  return backupCleaner.inspectBackupDirectory(config.backupRoot, value).ok;
 }
 
 // ── 懒加载引擎 ─────────────────────────────────────────────
@@ -61,7 +59,8 @@ router.post('/execute', (req, res, next) => {
   }
 
   // 读取之前保存的升级包
-  const packagePath = path.join(config.dbPath, '..', 'packages', `${task_id}.zip`);
+  const packagesRoot = path.resolve(config.dbPath, '..', 'packages');
+  const packagePath = path.join(packagesRoot, `${task_id}.zip`);
   if (!fs.existsSync(packagePath)) {
     return next(createError(400, `升级包文件不存在，请重新上传校验`));
   }
@@ -86,7 +85,16 @@ router.post('/execute', (req, res, next) => {
   // 后台执行
   getEngine().executeTask(task_id, upgrader).then((finalTask) => {
     // 升级成功 → 清理包文件，失败/回滚的包保留供排查
-    cleanupSuccessfulPackage(finalTask, packagePath);
+    const removed = cleanupSuccessfulPackage(finalTask, packagePath, { packagesRoot });
+    if (finalTask?.status === 'success' && !removed) {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        task_id,
+        action: 'package_cleanup',
+        message: '即时清理成功升级包失败，等待定时任务补偿',
+      }));
+    }
   }).catch((err) => {
     console.error(JSON.stringify({
       timestamp: new Date().toISOString(),
@@ -265,21 +273,15 @@ router.delete('/backups/:id', (req, res, next) => {
     return next(createError(404, `备份 ${backupId} 不存在`));
   }
 
-  // 物理删除备份目录
-  const backupPath = backup.backup_path;
-  if (!isManagedBackupPath(backupPath)) {
-    return next(createError(400, 'Backup is outside the managed backup directory'));
+  const deletion = backupCleaner.deleteBackupGroup({
+    db,
+    backupRoot: config.backupRoot,
+    backupId,
+  });
+  if (!deletion.ok) {
+    const status = deletion.code === 'backup_not_found' ? 404 : (deletion.code === 'delete_failed' || deletion.code === 'database_delete_failed' ? 500 : 400);
+    return next(createError(status, `备份删除被拒绝: ${deletion.code}`));
   }
-  if (backupPath && fs.existsSync(backupPath)) {
-    try {
-      fs.rmSync(backupPath, { recursive: true, force: true });
-    } catch (err) {
-      return next(createError(500, `删除备份目录失败: ${err.message}`));
-    }
-  }
-
-  // 删除数据库记录
-  db.prepare('DELETE FROM backups WHERE id = ?').run(backupId);
 
   // 审计日志
   db.prepare(`
@@ -294,6 +296,7 @@ router.delete('/backups/:id', (req, res, next) => {
       backup_id: backup.id,
       version: backup.version,
       size_bytes: backup.size_bytes,
+      removed_records: deletion.removedRecords,
     }),
   );
 
@@ -304,6 +307,7 @@ router.delete('/backups/:id', (req, res, next) => {
       id: backup.id,
       component: backup.component,
       version: backup.version,
+      removed_records: deletion.removedRecords,
     },
   });
 });

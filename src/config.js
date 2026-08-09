@@ -30,6 +30,14 @@ const config = {
   reportAttributionRequired: process.env.GAIOP_REPORT_ATTRIBUTION_REQUIRED === 'true',
   reportAttributionIndexPath: process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH || '/var/lib/gaiop/report-attribution/index.json',
   reportAttributionMaxAgeMs: parseInt(process.env.GAIOP_REPORT_ATTRIBUTION_MAX_AGE_MS || '30000', 10),
+  retentionAutoDelete: process.env.GAIOP_UPGRADE_RETENTION_AUTO_DELETE === 'true',
+  retentionMaxItems: parseInt(process.env.GAIOP_UPGRADE_RETENTION_MAX_ITEMS || '100', 10),
+  retentionAuditLog: process.env.GAIOP_UPGRADE_RETENTION_AUDIT_LOG || '/var/lib/gaiop/upgrade/retention-cleanup-audit.jsonl',
+  retentionLockPath: process.env.GAIOP_UPGRADE_RETENTION_LOCK_PATH || '/run/gaiop-upgrade-retention/cleanup.lock',
+  failedPackageRetentionDays: Math.max(7, parseInt(process.env.GAIOP_UPGRADE_FAILED_PACKAGE_RETENTION_DAYS || '7', 10)),
+  stagingRetentionHours: Math.max(24, parseInt(process.env.GAIOP_UPGRADE_STAGING_RETENTION_HOURS || '24', 10)),
+  backupRetentionDays: Math.max(90, parseInt(process.env.GAIOP_UPGRADE_BACKUP_RETENTION_DAYS || '90', 10)),
+  backupMinUsableGroups: Math.max(5, parseInt(process.env.GAIOP_UPGRADE_BACKUP_MIN_USABLE_GROUPS || '5', 10)),
 };
 
 module.exports = config;

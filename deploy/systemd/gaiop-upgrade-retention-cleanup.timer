@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GAIOP upgrade retention cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=gaiop-upgrade-retention-cleanup.service
+
+[Install]
+WantedBy=timers.target

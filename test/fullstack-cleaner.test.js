@@ -10,7 +10,6 @@ const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
 const { UpgradeEngine } = require('../src/services/UpgradeEngine');
 const { FullStackUpgrader } = require('../src/services/FullStackUpgrader');
-const backupCleaner = require('../src/services/BackupCleaner');
 const { buildFullStackPackage } = require('./helpers');
 
 // ── Fixtures ───────────────────────────────────────────────
@@ -128,44 +127,6 @@ describe('FullStackUpgrader', () => {
     // 验证备份记录
     const backups = db.prepare('SELECT DISTINCT component FROM backups').all();
     assert.ok(backups.length >= 2, `期望 >=2 个组件有备份，实际: ${backups.length}`);
-  });
-});
-
-// ════════════════════════════════════════════════════════════
-
-describe('BackupCleaner', () => {
-  it('应保留最近 N 个备份，删除多余的', () => {
-    // 创建 5 个备份
-    const now = new Date();
-    for (let i = 0; i < 5; i++) {
-      const backupDir = path.join(testConfig.backupRoot, 'test', `backup_${i}`);
-      fs.mkdirSync(backupDir, { recursive: true });
-      fs.writeFileSync(path.join(backupDir, 'data.txt'), `backup ${i}`);
-      const t = new Date(now.getTime() - i * 86400000).toISOString(); // 每天一个
-      db.prepare("INSERT INTO backups (component, version, backup_path, size_bytes, created_at) VALUES ('test-skill', ?, ?, 100, ?)")
-        .run(`1.${i}.0`, backupDir, t);
-    }
-
-    // 执行清理（保留最近 3 个）
-    const result = backupCleaner.run(3, db);
-    assert.strictEqual(result.removed, 2);
-
-    // 验证只剩 3 个
-    const remaining = db.prepare("SELECT * FROM backups WHERE component = 'test-skill' ORDER BY created_at DESC").all();
-    assert.strictEqual(remaining.length, 3);
-    // 最近的是 backup_0（今天）
-    assert.ok(remaining[0].backup_path.includes('backup_0'));
-  });
-
-  it('备份数 <= 保留数时不删除', () => {
-    const backupDir = path.join(testConfig.backupRoot, 'test2', 'only');
-    fs.mkdirSync(backupDir, { recursive: true });
-    fs.writeFileSync(path.join(backupDir, 'data.txt'), 'only one');
-    db.prepare("INSERT INTO backups (component, version, backup_path, size_bytes) VALUES ('test-skill2', '1.0.0', ?, 100)")
-      .run(backupDir);
-
-    const result = backupCleaner.run(null, db);
-    assert.strictEqual(result.removed, 0);
   });
 });
 

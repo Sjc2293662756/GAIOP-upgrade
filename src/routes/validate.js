@@ -12,7 +12,19 @@ const router = express.Router();
 const stagingDir = path.resolve(config.packageStagingRoot);
 
 function removeStagedFile(file) {
-  if (file?.path) fs.rmSync(file.path, { force: true });
+  if (!file?.path) return true;
+  try {
+    fs.rmSync(file.path, { force: true });
+    return true;
+  } catch (_) {
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      action: 'staging_cleanup',
+      message: '即时清理升级暂存文件失败，等待定时任务补偿',
+    }));
+    return false;
+  }
 }
 
 // ── Multer 配置 ────────────────────────────────────────────
