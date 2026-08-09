@@ -38,6 +38,11 @@ const config = {
   stagingRetentionHours: Math.max(24, parseInt(process.env.GAIOP_UPGRADE_STAGING_RETENTION_HOURS || '24', 10)),
   backupRetentionDays: Math.max(90, parseInt(process.env.GAIOP_UPGRADE_BACKUP_RETENTION_DAYS || '90', 10)),
   backupMinUsableGroups: Math.max(5, parseInt(process.env.GAIOP_UPGRADE_BACKUP_MIN_USABLE_GROUPS || '5', 10)),
+  sqliteBackupRoot: process.env.GAIOP_UPGRADE_SQLITE_BACKUP_DIR || '/var/lib/gaiop/upgrade/sqlite-backups',
+  sqliteBackupCreateEnabled: process.env.GAIOP_UPGRADE_SQLITE_BACKUP_CREATE_ENABLED === 'true',
+  sqliteBackupCleanupEnabled: process.env.GAIOP_UPGRADE_SQLITE_BACKUP_CLEANUP_ENABLED === 'true',
+  sqliteBackupLockPath: process.env.GAIOP_UPGRADE_SQLITE_BACKUP_LOCK_PATH || '/run/gaiop-upgrade-sqlite-backup/backup.lock',
+  sqliteRestoreTestRoot: process.env.GAIOP_UPGRADE_SQLITE_RESTORE_TEST_DIR || '/var/lib/gaiop/upgrade/sqlite-restore-tests',
 };
 
 module.exports = config;

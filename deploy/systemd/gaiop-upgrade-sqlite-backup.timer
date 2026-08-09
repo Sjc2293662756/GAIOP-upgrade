@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GAIOP upgrade SQLite backup daily
+
+[Timer]
+OnCalendar=*-*-* 01:35:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+Unit=gaiop-upgrade-sqlite-backup.service
+
+[Install]
+WantedBy=timers.target

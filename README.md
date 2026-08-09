@@ -33,8 +33,11 @@ GAIOP Admin 页面 -> Admin BFF -> 回环地址上的 GAIOP-upgrade
 | Skills | `/home/netinside/.openclaw/workspace/skills` |
 | Gateway 服务 | `netinside` 用户级 `openclaw-gateway.service` |
 | 升级服务 | `gaiop-upgrade.service` |
+| SQLite备份 | `/var/lib/gaiop/upgrade/sqlite-backups`（模板默认关闭） |
 
 systemd 单元、环境变量示例和固定 Gateway 辅助程序位于 `deploy/`。正式环境文件不得提交到 Git。
+
+升级数据库本机一致性备份和仅临时库恢复验证见 `docs/2026-08-10-GAIOP升级数据库本机备份与恢复验证.md`。该机制独立于组件升级回滚备份，创建和清理开关在模板中均默认关闭。
 旧的进程内定时备份清理已移除；自动清理只允许由 `gaiop-upgrade-retention-cleanup.timer` 触发，且首次真实启用前必须完成生产只读候选核查并单独确认。
 
 ## 验证
