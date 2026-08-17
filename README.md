@@ -37,6 +37,8 @@ GAIOP Admin 页面 -> Admin BFF -> 回环地址上的 GAIOP-upgrade
 
 systemd 单元、环境变量示例和固定 Gateway 辅助程序位于 `deploy/`。正式环境文件不得提交到 Git。
 
+留存运行时交付清单位于 `deploy/retention-runtime-manifest.json`，固定登记组件升级清理与 SQLite 备份各自的脚本、service、timer 和互不重叠的数据根。发布打包不得只复制 unit 而漏掉对应的 `src` 入口。
+
 升级数据库本机一致性备份和仅临时库恢复验证见 `docs/2026-08-10-GAIOP升级数据库本机备份与恢复验证.md`。该机制独立于组件升级回滚备份，创建和清理开关在模板中均默认关闭。
 旧的进程内定时备份清理已移除；自动清理只允许由 `gaiop-upgrade-retention-cleanup.timer` 触发，且首次真实启用前必须完成生产只读候选核查并单独确认。
 
