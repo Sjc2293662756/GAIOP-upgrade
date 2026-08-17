@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "gaiop-upgrade-retention-runtime/v1",
+  "environmentExample": "deploy/env/gaiop-upgrade.env.example",
+  "runtimeScripts": [
+    "src/retention-cleanup.js",
+    "src/sqlite-backup.js",
+    "src/sqlite-restore-test.js"
+  ],
+  "systemdUnits": [
+    "deploy/systemd/gaiop-upgrade-retention-cleanup.service",
+    "deploy/systemd/gaiop-upgrade-retention-cleanup.timer",
+    "deploy/systemd/gaiop-upgrade-sqlite-backup.service",
+    "deploy/systemd/gaiop-upgrade-sqlite-backup.timer"
+  ],
+  "ownershipBoundaries": {
+    "componentRollbackRoot": "/var/backups/gaiop/upgrade",
+    "sqliteBackupRoot": "/var/lib/gaiop/upgrade/sqlite-backups"
+  }
+}
