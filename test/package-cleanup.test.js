@@ -73,11 +73,11 @@ test('task package cleanup removes residual success packages immediately and ter
       writeAgedFile(path.join(fixture.packagesRoot, `${id}.zip`), id === ids.failedFresh ? now - 8 * 24 * 60 * 60 * 1000 : now - 10 * 24 * 60 * 60 * 1000);
     }
     const result = cleanupTaskPackages({ db: fixture.db, packagesRoot: fixture.packagesRoot, now, maxItems: 10 });
-    assert.equal(result.success, 3);
-    assert.equal(result.reasons.not_expired, 1);
+    assert.equal(result.success, 2);
+    assert.equal(result.reasons.not_expired, 2);
     assert.equal(result.reasons.active_task, 3);
     assert.equal(fs.existsSync(path.join(fixture.packagesRoot, `${ids.success}.zip`)), false);
-    assert.equal(fs.existsSync(path.join(fixture.packagesRoot, `${ids.failedBoundary}.zip`)), false);
+    assert.equal(fs.existsSync(path.join(fixture.packagesRoot, `${ids.failedBoundary}.zip`)), true);
     assert.equal(fs.existsSync(path.join(fixture.packagesRoot, `${ids.rolledBackOld}.zip`)), false);
     assert.equal(fs.existsSync(path.join(fixture.packagesRoot, `${ids.failedFresh}.zip`)), true);
     assert.equal(fs.existsSync(path.join(fixture.packagesRoot, `${ids.running}.zip`)), true);
@@ -165,13 +165,70 @@ test('staging cleanup removes only strict UUID zip orphans older than 24 hours',
     fs.mkdirSync(path.join(fixture.stagingRoot, 'unknown-directory'));
     const first = cleanupStagingPackages({ stagingRoot: fixture.stagingRoot, now, maxItems: 1 });
     assert.equal(first.success, 1);
-    assert.equal(first.reasons.batch_limit, 1);
-    assert.equal(first.reasons.not_expired, 1);
+    assert.equal(first.reasons.not_expired, 2);
     assert.equal(first.reasons.unknown_filename, 1);
     assert.equal(first.reasons.unknown_directory, 1);
     const second = cleanupStagingPackages({ stagingRoot: fixture.stagingRoot, now, maxItems: 10 });
-    assert.equal(second.success, 1);
+    assert.equal(second.success, 0);
     assert.equal(fs.existsSync(fresh), true);
+  } finally {
+    fixture.db.close();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('staging dry-run and execution use the same candidate plan without dry-run deletion', () => {
+  const fixture = createFixture('gaiop-staging-dry-run-');
+  const now = Date.UTC(2026, 7, 9, 12);
+  const target = path.join(fixture.stagingRoot, '00000000-0000-4000-8000-000000000050.zip');
+  try {
+    writeAgedFile(target, now - 48 * 60 * 60 * 1000);
+    let unlinkCalls = 0;
+    const preview = cleanupStagingPackages({
+      stagingRoot: fixture.stagingRoot,
+      now,
+      dryRun: true,
+      fs: { unlinkSync: () => { unlinkCalls += 1; } },
+    });
+    assert.equal(preview.candidateCount, 1);
+    assert.equal(preview.success, 0);
+    assert.equal(unlinkCalls, 0);
+    assert.equal(fs.existsSync(target), true);
+
+    const executed = cleanupStagingPackages({ stagingRoot: fixture.stagingRoot, now, maxItems: 10 });
+    assert.equal(executed.candidateCount, 1);
+    assert.equal(executed.success, 1);
+    assert.equal(fs.existsSync(target), false);
+  } finally {
+    fixture.db.close();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('package deletion skips a candidate whose file identity changes after discovery', () => {
+  const fixture = createFixture('gaiop-package-identity-');
+  const now = Date.UTC(2026, 7, 9, 12);
+  const id = '00000000-0000-4000-8000-000000000051';
+  const target = path.join(fixture.packagesRoot, `${id}.zip`);
+  insertTask(fixture.db, id, 'success', now - 48 * 60 * 60 * 1000);
+  writeAgedFile(target, now - 48 * 60 * 60 * 1000);
+  let targetStats = 0;
+  try {
+    const result = cleanupTaskPackages({
+      db: fixture.db,
+      packagesRoot: fixture.packagesRoot,
+      now,
+      fs: {
+        lstatSync: (candidate) => {
+          const stat = fs.lstatSync(candidate);
+          if (candidate === target && ++targetStats > 1) return { ...stat, ino: Number(stat.ino) + 1 };
+          return stat;
+        },
+      },
+    });
+    assert.equal(result.success, 0);
+    assert.equal(result.reasons.entry_changed, 1);
+    assert.equal(fs.existsSync(target), true);
   } finally {
     fixture.db.close();
     fs.rmSync(fixture.root, { recursive: true, force: true });

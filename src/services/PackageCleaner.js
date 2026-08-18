@@ -16,6 +16,10 @@ function createResult(category, cutoffMs) {
     skipped: 0,
     failed: 0,
     freedBytes: 0,
+    candidateCount: 0,
+    candidateBytes: 0,
+    earliestCandidateTime: null,
+    latestCandidateTime: null,
     reasons: {},
   };
 }
@@ -55,13 +59,46 @@ function readManagedRoot(rootDirectory, expectedName, io, result) {
   }
 }
 
-function deleteCandidates(candidates, maxItems, io, result) {
-  candidates.sort((left, right) => left.sortTime - right.sortTime || left.target.localeCompare(right.target));
-  const limit = Math.max(0, Math.floor(Number(maxItems) || 0));
-  for (const candidate of candidates.slice(0, limit)) {
+function recordCandidate(result, candidate) {
+  result.candidateCount += 1;
+  result.candidateBytes += Number.isFinite(candidate.stat.size) ? Math.max(0, candidate.stat.size) : 0;
+  const timestamp = new Date(candidate.sortTime).toISOString();
+  if (!result.earliestCandidateTime || timestamp < result.earliestCandidateTime) result.earliestCandidateTime = timestamp;
+  if (!result.latestCandidateTime || timestamp > result.latestCandidateTime) result.latestCandidateTime = timestamp;
+}
+
+function attachPlan(result, candidates) {
+  Object.defineProperty(result, '_candidatePlan', { value: candidates, enumerable: false, configurable: true, writable: true });
+  return result;
+}
+
+function revalidateFileCandidate(candidate, options, io) {
+  const root = path.resolve(String(options.root || ''));
+  const cutoffMs = Number(options.now) - Number(options.retentionMs);
+  if (candidate.target === root || !isInsideRoot(root, candidate.target)) return false;
+  try {
+    const current = io.lstatSync(candidate.target);
+    if (!current.isFile() || current.isSymbolicLink() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino || !Number.isFinite(current.mtimeMs) || (candidate.requiresExpiry && current.mtimeMs >= cutoffMs) || !UUID_ZIP_PATTERN.test(path.basename(candidate.target))) return false;
+    if (!options.db) return true;
+    if (!candidate.taskId) return false;
+    const task = options.db.prepare('SELECT id, status, created_at, finished_at FROM upgrade_tasks WHERE id = ?').get(candidate.taskId);
+    if (!task || String(task.id).toLowerCase() !== path.basename(candidate.target).slice(0, -4).toLowerCase()) return false;
+    if (candidate.requiresExpiry) {
+      const taskTime = parseTaskTime(task);
+      return RETAINED_TERMINAL_STATUSES.has(task.status) && Number.isFinite(taskTime) && taskTime < cutoffMs;
+    }
+    return task.status === 'success';
+  } catch (_) {
+    return false;
+  }
+}
+
+function deleteCandidates(candidates, options, io, result) {
+  const ordered = [...candidates].sort((left, right) => left.sortTime - right.sortTime || left.target.localeCompare(right.target));
+  const limit = Math.max(0, Math.floor(Number(options.maxItems) || 0));
+  for (const candidate of ordered.slice(0, limit)) {
     try {
-      const current = io.lstatSync(candidate.target);
-      if (current.isSymbolicLink() || !current.isFile() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino) {
+      if (!revalidateFileCandidate(candidate, options, io)) {
         addReason(result, 'skipped', 'entry_changed');
         continue;
       }
@@ -72,7 +109,7 @@ function deleteCandidates(candidates, maxItems, io, result) {
       addReason(result, 'failed', 'delete_failed');
     }
   }
-  for (let index = limit; index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit');
+  for (let index = limit; index < ordered.length; index += 1) addReason(result, 'skipped', 'batch_limit');
 }
 
 function createIo(overrides = {}) {
@@ -117,17 +154,17 @@ function cleanupSuccessfulPackage(finalTask, packagePath, options = {}) {
   }
 }
 
-function cleanupTaskPackages({ db, packagesRoot, now = Date.now(), retentionMs = FAILED_PACKAGE_RETENTION_MS, maxItems = 100, fs: fsOverrides = {} } = {}) {
+function discoverTaskPackageCandidates({ db, packagesRoot, now = Date.now(), retentionMs = FAILED_PACKAGE_RETENTION_MS, fs: fsOverrides = {} } = {}) {
   const nowMs = Number(now);
   const cutoffMs = nowMs - retentionMs;
   const result = createResult('upgrade_task_package', cutoffMs);
   if (!db || !Number.isFinite(nowMs) || !Number.isFinite(retentionMs) || retentionMs < 0) {
     addReason(result, 'failed', 'invalid_policy');
-    return result;
+    return { result: attachPlan(result, []), candidates: [] };
   }
   const io = createIo(fsOverrides);
   const managed = readManagedRoot(packagesRoot, 'packages', io, result);
-  if (!managed) return result;
+  if (!managed) return { result: attachPlan(result, []), candidates: [] };
   const tasks = db.prepare('SELECT id, status, created_at, finished_at FROM upgrade_tasks').all();
   const taskById = new Map(tasks.filter((task) => typeof task.id === 'string').map((task) => [task.id.toLowerCase(), task]));
   const candidates = [];
@@ -172,7 +209,9 @@ function cleanupTaskPackages({ db, packagesRoot, now = Date.now(), retentionMs =
       continue;
     }
     if (task.status === 'success') {
-      candidates.push({ target, stat, sortTime: stat.mtimeMs });
+      const candidate = { target, stat, sortTime: stat.mtimeMs, requiresExpiry: false, taskId: task.id };
+      candidates.push(candidate);
+      recordCandidate(result, candidate);
       continue;
     }
     if (!RETAINED_TERMINAL_STATUSES.has(task.status)) {
@@ -184,28 +223,40 @@ function cleanupTaskPackages({ db, packagesRoot, now = Date.now(), retentionMs =
       addReason(result, 'skipped', 'invalid_timestamp');
       continue;
     }
-    if (taskTime > cutoffMs || stat.mtimeMs > cutoffMs) {
+    if (taskTime >= cutoffMs || stat.mtimeMs >= cutoffMs) {
       addReason(result, 'skipped', 'not_expired');
       continue;
     }
-    candidates.push({ target, stat, sortTime: Math.max(taskTime, stat.mtimeMs) });
+    const candidate = { target, stat, sortTime: Math.max(taskTime, stat.mtimeMs), requiresExpiry: true, taskId: task.id };
+    candidates.push(candidate);
+    recordCandidate(result, candidate);
   }
 
-  deleteCandidates(candidates, maxItems, io, result);
+  return { result: attachPlan(result, candidates), candidates };
+}
+
+function cleanupTaskPackages({ db, packagesRoot, now = Date.now(), retentionMs = FAILED_PACKAGE_RETENTION_MS, maxItems = 100, fs: fsOverrides = {}, dryRun = false, plan } = {}) {
+  const io = createIo(fsOverrides);
+  const discovered = plan || discoverTaskPackageCandidates({ db, packagesRoot, now, retentionMs, fs: fsOverrides });
+  const result = discovered.result;
+  const candidates = discovered.candidates;
+  if (!dryRun) deleteCandidates(candidates, { root: packagesRoot, db, now, retentionMs, maxItems }, io, result);
+  else for (let index = Math.max(0, Math.floor(Number(maxItems) || 0)); index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit');
+  attachPlan(result, candidates);
   return result;
 }
 
-function cleanupStagingPackages({ stagingRoot, now = Date.now(), retentionMs = STAGING_RETENTION_MS, maxItems = 100, fs: fsOverrides = {} } = {}) {
+function discoverStagingCandidates({ stagingRoot, now = Date.now(), retentionMs = STAGING_RETENTION_MS, fs: fsOverrides = {} } = {}) {
   const nowMs = Number(now);
   const cutoffMs = nowMs - retentionMs;
   const result = createResult('upgrade_staging_package', cutoffMs);
   if (!Number.isFinite(nowMs) || !Number.isFinite(retentionMs) || retentionMs < 0) {
     addReason(result, 'failed', 'invalid_policy');
-    return result;
+    return { result: attachPlan(result, []), candidates: [] };
   }
   const io = createIo(fsOverrides);
   const managed = readManagedRoot(stagingRoot, 'staging', io, result);
-  if (!managed) return result;
+  if (!managed) return { result: attachPlan(result, []), candidates: [] };
   const candidates = [];
   for (const entry of managed.entries) {
     const target = path.resolve(managed.root, entry.name);
@@ -236,13 +287,25 @@ function cleanupStagingPackages({ stagingRoot, now = Date.now(), retentionMs = S
       addReason(result, 'skipped', 'invalid_timestamp');
       continue;
     }
-    if (stat.mtimeMs > cutoffMs) {
+    if (stat.mtimeMs >= cutoffMs) {
       addReason(result, 'skipped', 'not_expired');
       continue;
     }
-    candidates.push({ target, stat, sortTime: stat.mtimeMs });
+    const candidate = { target, stat, sortTime: stat.mtimeMs, requiresExpiry: true };
+    candidates.push(candidate);
+    recordCandidate(result, candidate);
   }
-  deleteCandidates(candidates, maxItems, io, result);
+  return { result: attachPlan(result, candidates), candidates };
+}
+
+function cleanupStagingPackages({ stagingRoot, now = Date.now(), retentionMs = STAGING_RETENTION_MS, maxItems = 100, fs: fsOverrides = {}, dryRun = false, plan } = {}) {
+  const io = createIo(fsOverrides);
+  const discovered = plan || discoverStagingCandidates({ stagingRoot, now, retentionMs, fs: fsOverrides });
+  const result = discovered.result;
+  const candidates = discovered.candidates;
+  if (!dryRun) deleteCandidates(candidates, { root: stagingRoot, now, retentionMs, maxItems }, io, result);
+  else for (let index = Math.max(0, Math.floor(Number(maxItems) || 0)); index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit');
+  attachPlan(result, candidates);
   return result;
 }
 
@@ -250,6 +313,8 @@ module.exports = {
   cleanupSuccessfulPackage,
   cleanupTaskPackages,
   cleanupStagingPackages,
+  discoverTaskPackageCandidates,
+  discoverStagingCandidates,
   UUID_ZIP_PATTERN,
   FAILED_PACKAGE_RETENTION_MS,
   STAGING_RETENTION_MS,

@@ -66,6 +66,20 @@ test('backup cleanup requires both 90 days and exclusion from the five newest us
   }
 });
 
+test('backup retention treats the exact 90-day boundary as protected', () => {
+  const fixture = createFixture('gaiop-backup-boundary-');
+  const now = Date.UTC(2026, 7, 9, 12);
+  try {
+    for (const age of [1, 2, 3, 4, 5, 90]) addBackup(fixture, 'component', `boundary-${age}`, age, now);
+    const result = backupCleaner.run({ db: fixture.db, backupRoot: fixture.backupRoot, now, maxItems: 10 });
+    assert.equal(result.success, 0);
+    assert.equal(result.reasons.not_expired, 1);
+    assert.equal(fs.existsSync(path.join(fixture.backupRoot, 'component', 'boundary-90')), true);
+  } finally {
+    cleanupFixture(fixture);
+  }
+});
+
 test('shared physical backup is deleted only when every reference is old and unprotected', () => {
   const fixture = createFixture('gaiop-backup-shared-');
   const now = Date.UTC(2026, 7, 9, 12);
@@ -156,7 +170,7 @@ test('backup cleanup refuses root, traversal, missing paths and symbolic links w
     assert.equal(result.success, 0);
     assert.equal(result.reasons.path_outside_root, 2);
     assert.equal(result.reasons.missing_directory, 1);
-    assert.equal(result.reasons.symbolic_link, 1);
+    assert.equal(result.reasons.symbolic_link, 2);
     assert.equal(fixture.db.prepare('SELECT COUNT(*) AS count FROM backups').get().count, 5);
     assert.equal(fs.existsSync(outside), true);
     assert.equal(fs.existsSync(realTarget), true);

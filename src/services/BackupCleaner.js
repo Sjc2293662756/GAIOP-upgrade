@@ -26,6 +26,10 @@ function createResult(cutoffMs) {
     skipped: 0,
     failed: 0,
     freedBytes: 0,
+    candidateCount: 0,
+    candidateBytes: 0,
+    earliestCandidateTime: null,
+    latestCandidateTime: null,
     reasons: {},
   };
 }
@@ -33,6 +37,19 @@ function createResult(cutoffMs) {
 function addReason(result, outcome, reason, count = 1) {
   result[outcome] += count;
   result.reasons[reason] = (result.reasons[reason] || 0) + count;
+}
+
+function recordCandidate(result, candidate) {
+  result.candidateCount += 1;
+  result.candidateBytes += Math.max(0, Number(candidate.sizeBytes) || 0);
+  const timestamp = new Date(candidate.sortTime).toISOString();
+  if (!result.earliestCandidateTime || timestamp < result.earliestCandidateTime) result.earliestCandidateTime = timestamp;
+  if (!result.latestCandidateTime || timestamp > result.latestCandidateTime) result.latestCandidateTime = timestamp;
+}
+
+function attachPlan(result, candidates) {
+  Object.defineProperty(result, '_candidatePlan', { value: candidates, enumerable: false, configurable: true, writable: true });
+  return result;
 }
 
 function parseCreatedAt(value, nowMs) {
@@ -116,7 +133,7 @@ function rowsForPhysicalPath(db, backupRoot, inspectedTarget, fsOverrides) {
   return { records, unsafeReference };
 }
 
-function deleteBackupGroup({ db, backupRoot, backupId = null, backupPath = null, fs: fsOverrides = {} } = {}) {
+function deleteBackupGroup({ db, backupRoot, backupId = null, backupPath = null, expected = null, fs: fsOverrides = {} } = {}) {
   if (!db) return { ok: false, code: 'database_required', removedRecords: 0, freedBytes: 0 };
   let requested = null;
   if (backupId != null) requested = db.prepare('SELECT * FROM backups WHERE id = ?').get(backupId);
@@ -124,10 +141,22 @@ function deleteBackupGroup({ db, backupRoot, backupId = null, backupPath = null,
   const rawPath = requested?.backup_path || backupPath;
   const inspected = inspectBackupDirectory(backupRoot, rawPath, fsOverrides);
   if (!inspected.ok) return { ok: false, code: inspected.code, removedRecords: 0, freedBytes: 0 };
+  if (expected?.stat && (expected.stat.dev !== inspected.stat.dev || expected.stat.ino !== inspected.stat.ino)) return { ok: false, code: 'candidate_changed', removedRecords: 0, freedBytes: 0 };
   const references = rowsForPhysicalPath(db, backupRoot, inspected, fsOverrides);
   if (references.unsafeReference) return { ok: false, code: 'unsafe_shared_reference', removedRecords: 0, freedBytes: 0 };
   const records = references.records;
   if (records.length === 0) return { ok: false, code: 'backup_not_found', removedRecords: 0, freedBytes: 0 };
+  const active = db.prepare("SELECT COUNT(*) AS count FROM upgrade_tasks WHERE status IN ('running', 'rolling_back')").get();
+  if (Number(active?.count) > 0) return { ok: false, code: 'active_task', removedRecords: 0, freedBytes: 0 };
+  if (expected?.records) {
+    const expectedIds = expected.records.map((row) => row.id).sort().join(',');
+    const currentIds = records.map((row) => row.id).sort().join(',');
+    if (expectedIds !== currentIds || records.some((row) => !Number.isFinite(parseCreatedAt(row.created_at, expected.nowMs)) || parseCreatedAt(row.created_at, expected.nowMs) >= expected.cutoffMs)) return { ok: false, code: 'candidate_changed', removedRecords: 0, freedBytes: 0 };
+  }
+  if (expected?.keepCount != null) {
+    const currentGroups = buildGroups(db.prepare('SELECT * FROM backups ORDER BY created_at DESC, id DESC').all(), backupRoot, expected.nowMs, fsOverrides, { skipped: 0, failed: 0, reasons: {} });
+    if (protectedUsableGroups(currentGroups, expected.keepCount).has(inspected.realTarget)) return { ok: false, code: 'protected_recent_group', removedRecords: 0, freedBytes: 0 };
+  }
   const freedBytes = Math.max(0, ...records.map((row) => Number(row.size_bytes) || 0));
   const io = createIo(fsOverrides);
   try {
@@ -213,6 +242,25 @@ function run(options = {}) {
     return result;
   }
 
+  if (options.plan) {
+    for (const field of ['candidateCount', 'candidateBytes', 'earliestCandidateTime', 'latestCandidateTime']) result[field] = Number.isFinite(options.plan.result?.[field]) || typeof options.plan.result?.[field] === 'string' ? options.plan.result[field] : result[field];
+    const planned = [...(options.plan.candidates || [])].sort((left, right) => left.sortTime - right.sortTime || left.key.localeCompare(right.key));
+    if (!options.dryRun) {
+      for (const candidate of planned.slice(0, maxItems)) {
+        const deletion = deleteBackupGroup({ db, backupRoot, backupPath: candidate.key, expected: { ...candidate, keepCount }, fs: options.fs });
+        if (!deletion.ok) {
+          addReason(result, 'failed', deletion.code);
+          continue;
+        }
+        result.success += 1;
+        result.freedBytes += deletion.freedBytes;
+      }
+    }
+    for (let index = maxItems; index < planned.length; index += 1) addReason(result, 'skipped', 'batch_limit');
+    attachPlan(result, planned);
+    return result;
+  }
+
   const active = db.prepare(`SELECT COUNT(*) AS count FROM upgrade_tasks WHERE status IN ('running', 'rolling_back')`).get();
   if (Number(active?.count) > 0) {
     addReason(result, 'skipped', 'active_task');
@@ -235,27 +283,65 @@ function run(options = {}) {
       addReason(result, 'skipped', 'invalid_timestamp');
       continue;
     }
-    if (group.records.some((record) => record.createdAtMs > cutoffMs)) {
+    if (group.records.some((record) => record.createdAtMs >= cutoffMs)) {
       addReason(result, 'skipped', 'not_expired');
       continue;
     }
-    candidates.push({
+    const candidate = {
       key: group.key,
       sortTime: Math.max(...group.records.map((record) => record.createdAtMs)),
-    });
+      sizeBytes: Math.max(0, ...group.records.map((record) => Number(record.size_bytes) || 0)),
+      stat: group.inspected.stat,
+      records: group.records,
+      nowMs,
+      cutoffMs,
+    };
+    candidates.push(candidate);
+    recordCandidate(result, candidate);
   }
 
-  candidates.sort((left, right) => left.sortTime - right.sortTime || left.key.localeCompare(right.key));
-  for (const candidate of candidates.slice(0, maxItems)) {
-    const deletion = deleteBackupGroup({ db, backupRoot, backupPath: candidate.key, fs: options.fs });
-    if (!deletion.ok) {
-      addReason(result, 'failed', deletion.code);
-      continue;
+  const io = createIo(options.fs);
+  try {
+    const root = path.resolve(String(backupRoot || ''));
+    const rootStat = io.lstatSync(root);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) addReason(result, 'failed', 'unsafe_backup_root');
+    else {
+      const registeredKeys = new Set(groups.keys());
+      for (const entry of io.readdirSync(root, { withFileTypes: true })) {
+        const target = path.resolve(root, entry.name);
+        if (entry.isSymbolicLink()) {
+          addReason(result, 'skipped', 'symbolic_link');
+          continue;
+        }
+        if (!entry.isDirectory()) {
+          addReason(result, 'skipped', 'unknown_file_type');
+          continue;
+        }
+        try {
+          if (!registeredKeys.has(io.realpathSync(target))) addReason(result, 'skipped', 'unregistered_directory');
+        } catch (_) {
+          addReason(result, 'skipped', 'unregistered_directory');
+        }
+      }
     }
-    result.success += 1;
-    result.freedBytes += deletion.freedBytes;
+  } catch (_) {
+    addReason(result, 'failed', 'backup_root_read_failed');
   }
-  for (let index = maxItems; index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit');
+
+  const ordered = candidates.sort((left, right) => left.sortTime - right.sortTime || left.key.localeCompare(right.key));
+  if (!options.dryRun) {
+    for (const candidate of ordered.slice(0, maxItems)) {
+      const deletion = deleteBackupGroup({ db, backupRoot, backupPath: candidate.key, expected: { ...candidate, keepCount }, fs: options.fs });
+      if (!deletion.ok) {
+        addReason(result, 'failed', deletion.code);
+        continue;
+      }
+      result.success += 1;
+      result.freedBytes += deletion.freedBytes;
+    }
+  }
+  for (let index = maxItems; index < ordered.length; index += 1) addReason(result, 'skipped', 'batch_limit');
+  attachPlan(result, ordered);
   return result;
 }
 
