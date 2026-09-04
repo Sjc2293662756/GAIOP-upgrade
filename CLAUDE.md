@@ -16,15 +16,12 @@ NAPM 升级服务 — an upgrade orchestration service for the NAPM (观枢·智
 | `npm run db:init` | Initialize the DB schema and seed component registry (`node src/database/init.js`) |
 | `node tools/package.js --help` | CLI 打包签名工具 |
 
-## 远端开发测试服务器
+## 237 开发测试服务器
 
-| 项目 | 值 |
-|---|---|
-| 地址 | `101.254.114.237` |
-| 用户名 | `netinside` |
-| 密码 | `netinside_123` |
-
-SSH 连接: `ssh netinside@101.254.114.237`
+- 连接、只读核验和生产操作先遵循上级 `../AGENTS.md` 与 `../ops/README.md`。
+- 默认使用 `../ops/237/Invoke-237UpgradeReadOnlyPreflight.ps1` 做升级模块只读核验。
+- SSH 连接信息由本机加密连接记录或用户现场交互提供，不在仓库、文档、命令行参数或聊天中保存和传递。
+- 上传、部署、重启、迁移、清理和回滚必须获得用户明确授权，并使用 `../ops/237/` 中匹配的受控脚本。
 
 ## Architecture
 
